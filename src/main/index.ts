@@ -1,10 +1,10 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, clipboard, Tray, Menu, nativeImage, safeStorage } from 'electron'
 import { join, basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { statSync, existsSync, readdirSync, readFileSync, writeFileSync, openSync, mkdirSync } from 'node:fs'
-import { spawn as cpSpawn } from 'node:child_process'
+import { statSync, existsSync, readdirSync, readFileSync, writeFileSync, openSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { spawn as cpSpawn, execFileSync } from 'node:child_process'
 import * as pty from 'node-pty'
 
 // The main bundle is ESM (package.json "type": "module"), so __dirname doesn't
@@ -24,13 +24,39 @@ function sourceCheckoutRoot(marker: string): string {
   return ''
 }
 
-function localProjectTemplateRoot(): string {
+// Ordered template dirs to probe for bootstrap.sh. A configured *local path*
+// points straight at the template dir; the source-checkout roots need the
+// templates/project-template suffix appended. The packaged app matches none of
+// these (templates/ isn't bundled) and falls back to a clone — see
+// workspace:bootstrap.
+function templateDirCandidates(): string[] {
   const configured = resolvedTemplateRepo()
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(configured) && existsSync(join(configured, 'bootstrap.sh'))) {
-    return configured
+  const dirs: string[] = []
+  if (configured && !isTemplateUrl(configured)) dirs.push(configured)
+  const roots = [
+    process.env.GT_TERMINAL_REPO || '',
+    process.cwd(),
+    app.getAppPath(),
+    join(moduleDir, '..', '..'),
+  ].filter(Boolean)
+  for (const r of roots) dirs.push(join(r, 'templates', 'project-template'))
+  return dirs
+}
+
+// Shallow-clone the template repo into a temp dir; null when the clone yields no
+// usable checkout (offline, unreachable repo, or no bootstrap.sh). Caller owns cleanup.
+function cloneTemplateToTmp(repo: string): TemplateSource | null {
+  try {
+    const dir = mkdtempSync(join(tmpdir(), 'gt-bootstrap-'))
+    execFileSync('git', ['clone', '--depth', '1', repo, dir], { stdio: 'ignore', timeout: 60_000 })
+    if (!existsSync(join(dir, 'bootstrap.sh'))) {
+      rmSync(dir, { recursive: true, force: true })
+      return null
+    }
+    return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+  } catch {
+    return null
   }
-  const checkout = sourceCheckoutRoot(join('templates', 'project-template', 'bootstrap.sh'))
-  return checkout ? join(checkout, 'templates', 'project-template') : ''
 }
 import {
   readTranscriptStats,
@@ -60,6 +86,7 @@ import {
   setAllDisabled as setAllSchedulesDisabled,
 } from './agents-disabled'
 import { scaffoldProject } from './scaffold'
+import { pickTemplateSource, isTemplateUrl, type TemplateSource } from './template'
 import {
   readSettings,
   patchSettings,
@@ -933,25 +960,30 @@ ipcMain.handle('workspace:is-bootstrapped', (_e, repoRoot: string) => {
 // for conflicts). Streams nothing — we just wait and return ok/error.
 ipcMain.handle('workspace:bootstrap', async (_e, repoRoot: string) => {
   if (!repoRoot) return { error: 'no repoRoot' }
-  const templateRoot = localProjectTemplateRoot()
-  if (!templateRoot)
-    return {
-      error:
-        'project-template checkout not found — initialize templates/project-template or set Settings → template repo to a local project-template path',
-    }
-  const script = join(templateRoot, 'bootstrap.sh')
-  if (!existsSync(script))
-    return { error: `bootstrap.sh not found at ${script} — check project-template checkout` }
-  return new Promise<{ ok: true } | { error: string }>((resolve) => {
-    const p = cpSpawn('bash', [script, repoRoot], { stdio: 'pipe' })
-    let stderr = ''
-    p.stderr.on('data', (d) => (stderr += d.toString()))
-    p.on('exit', (code) => {
-      if (code === 0) resolve({ ok: true })
-      else resolve({ error: `bootstrap exited ${code}${stderr ? `: ${stderr.slice(0, 200)}` : ''}` })
-    })
-    p.on('error', (e) => resolve({ error: e.message }))
+  // Prefer a local checkout; the packaged app has none, so fall back to cloning
+  // the configured template repo to a temp dir (cleaned up in finally).
+  const src = pickTemplateSource({
+    candidates: templateDirCandidates(),
+    hasBootstrap: (d) => existsSync(join(d, 'bootstrap.sh')),
+    templateRepo: resolvedTemplateRepo(),
+    cloneToTmp: cloneTemplateToTmp,
   })
+  if ('error' in src) return { error: src.error }
+  const script = join(src.dir, 'bootstrap.sh')
+  try {
+    return await new Promise<{ ok: true } | { error: string }>((resolve) => {
+      const p = cpSpawn('bash', [script, repoRoot], { stdio: 'pipe' })
+      let stderr = ''
+      p.stderr.on('data', (d) => (stderr += d.toString()))
+      p.on('exit', (code) => {
+        if (code === 0) resolve({ ok: true })
+        else resolve({ error: `bootstrap exited ${code}${stderr ? `: ${stderr.slice(0, 200)}` : ''}` })
+      })
+      p.on('error', (e) => resolve({ error: e.message }))
+    })
+  } finally {
+    src.cleanup?.()
+  }
 })
 
 // In-app rebuild. Spawns bin/release fully detached and routes its output to
