@@ -9,7 +9,8 @@ type: feature
 source: research
 created: 2026-05-30
 updated: 2026-05-31
-prs: []
+prs:
+  - https://github.com/jessewalberg/TerMinal/pull/1
 refs: []
 depends_on: []
 ---
