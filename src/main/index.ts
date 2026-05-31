@@ -146,7 +146,7 @@ import {
   startBgWatcher,
   type BgTask,
 } from './bg-tasks'
-import { startCiWebhookServer } from './ci-webhook'
+import { startCiWebhookServer, stopCiWebhookServer } from './ci-webhook'
 import { readHitl, fileHitl, resolveHitl, removeHitl, type HitlItem } from './hitl'
 import { factoryHealth } from './factory-health'
 import { describeSpec, nextRun, type ScheduleSpec } from './cron'
@@ -1228,6 +1228,7 @@ app.on('window-all-closed', () => {
   if (watchTimer) clearInterval(watchTimer)
   if (activityTimer) clearInterval(activityTimer)
   if (telegramTimer) clearInterval(telegramTimer)
+  stopCiWebhookServer()
   for (const s of sessions.values()) s.pty.kill()
   sessions.clear()
   if (process.platform !== 'darwin') app.quit()

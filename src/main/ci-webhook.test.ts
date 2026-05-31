@@ -30,6 +30,16 @@ repos:
       ci_webhook_secret: 'sekrit',
     })
   })
+
+  test('strips inline comments from values', () => {
+    const yaml = `
+repos:
+  TerMinal:
+    root: /Users/me/TerMinal
+    ci_webhook_secret: sekrit # gitlab token
+`
+    expect(parsePrsConfigYaml(yaml)[0].ci_webhook_secret).toBe('sekrit')
+  })
 })
 
 describe('verifyCiWebhookAuth', () => {
@@ -61,6 +71,21 @@ describe('shouldSpawnWatchdog', () => {
     ).toBe(true)
     expect(shouldSpawnWatchdog({ object_kind: 'pipeline', status: 'success' })).toBe(false)
     expect(shouldSpawnWatchdog({ object_kind: 'push', status: 'failed' })).toBe(false)
+  })
+
+  test('reads status from object_attributes when top-level status absent', () => {
+    expect(
+      shouldSpawnWatchdog({
+        object_kind: 'pipeline',
+        object_attributes: { id: 1, ref: 'main', status: 'failed' },
+      }),
+    ).toBe(true)
+    expect(
+      shouldSpawnWatchdog({
+        object_kind: 'pipeline',
+        object_attributes: { id: 1, status: 'success' },
+      }),
+    ).toBe(false)
   })
 })
 
@@ -175,5 +200,63 @@ describe('handleCiWebhookRequest', () => {
 
     expect(get().status).toBe(200)
     expect(spawned).toBe(false)
+  })
+
+  test('passes CI env vars to spawn', async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined
+    const payload = {
+      object_kind: 'pipeline',
+      object_attributes: { id: 42, ref: 'fix/ci', status: 'failed' },
+      merge_request: { iid: 7 },
+    }
+    const body = Buffer.from(JSON.stringify(payload))
+    const req = mockRequest(body, { 'x-gitlab-token': secret })
+    const { res } = mockResponse()
+
+    await handleCiWebhookRequest(req, res, 'TerMinal', {
+      ...deps,
+      spawnFn: ({ env }) => {
+        capturedEnv = env
+        return {} as ChildProcess
+      },
+    })
+
+    expect(capturedEnv?.CI_PIPELINE_ID).toBe('42')
+    expect(capturedEnv?.CI_MR_IID).toBe('7')
+    expect(capturedEnv?.CI_BRANCH).toBe('fix/ci')
+    expect(capturedEnv?.TERMINAL_REPO).toBe(root)
+    expect(capturedEnv?.TERMINAL_AGENT_ID).toBe('ci-watchdog')
+  })
+
+  test('rejects unknown repo', async () => {
+    const body = Buffer.from('{}')
+    const req = mockRequest(body, { 'x-gitlab-token': secret })
+    const { res, get } = mockResponse()
+
+    await handleCiWebhookRequest(req, res, 'unknown-slug', deps)
+
+    expect(get().status).toBe(404)
+  })
+
+  test('rejects GET', async () => {
+    const req = mockRequest(Buffer.from(''), { 'x-gitlab-token': secret }, 'GET')
+    const { res, get } = mockResponse()
+
+    await handleCiWebhookRequest(req, res, 'TerMinal', deps)
+
+    expect(get().status).toBe(405)
+  })
+
+  test('rejects oversized body', async () => {
+    const req = new EventEmitter() as IncomingMessage
+    req.method = 'POST'
+    req.headers = { 'x-gitlab-token': secret }
+    const { res, get } = mockResponse()
+
+    const p = handleCiWebhookRequest(req, res, 'TerMinal', deps)
+    req.emit('data', Buffer.alloc(300 * 1024))
+    await p
+
+    expect(get().status).toBe(413)
   })
 })

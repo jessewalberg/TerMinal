@@ -39,6 +39,8 @@ spawns the script detached with `CI_*` env vars.
   TerMinal is open (or via a tunnel the operator controls). No cloud receiver.
 - Dry-run defaults **on** until `~/.config/TerMinal/ci-watchdog.json` sets
   `"dryRun": false` — stage 2/3 of the ticket rollout.
+- Request bodies are capped at **256 KiB** — pipeline webhook JSON is tiny;
+  the limit prevents accidental memory exhaustion from malformed clients.
 - If a future fleet dashboard ships, it should **delegate** to this module or
   share `ci-webhook-config.ts`, not fork the spawn logic.
 

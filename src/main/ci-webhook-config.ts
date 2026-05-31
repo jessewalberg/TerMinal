@@ -60,7 +60,9 @@ export function parsePrsConfigYaml(raw: string): CiWebhookRepoConfig[] {
     }
     const kv = trimmed.match(/^([a-z_]+):\s*(.+)$/)
     if (kv && curSlug) {
-      const val = kv[2].replace(/^["']|["']$/g, '')
+      let val = kv[2].replace(/^["']|["']$/g, '')
+      const comment = val.indexOf(' #')
+      if (comment !== -1) val = val.slice(0, comment).trim()
       if (kv[1] === 'root') cur.root = val
       if (kv[1] === 'ci_webhook_secret') cur.ci_webhook_secret = val
     }

@@ -9,12 +9,14 @@ import { spawn as cpSpawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, openSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { homedir } from 'node:os'
-import { repoRootFor, secretForRepo } from './ci-webhook-config'
+import { loadCiWebhookRepos, repoRootFor, secretForRepo } from './ci-webhook-config'
 
 const TERMINAL_BIN = join(homedir(), '.config', 'TerMinal', 'bin')
 const GLOBAL_SCRIPTS_DIR = join(homedir(), '.config', 'TerMinal', 'scripts')
 const LOG_DIR = join(homedir(), '.config', 'TerMinal', 'ci-webhook-spawns')
 const DEFAULT_PORT = 4848
+/** GitLab pipeline webhook JSON is small; cap body reads to avoid memory exhaustion. */
+const MAX_BODY_BYTES = 256 * 1024
 
 export { repoRootFor, secretForRepo, loadCiWebhookRepos } from './ci-webhook-config'
 
@@ -96,11 +98,24 @@ function safeEqual(a: string, b: string): boolean {
   }
 }
 
-function readBody(req: IncomingMessage): Promise<Buffer> {
+function readBody(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
-    req.on('data', (c) => chunks.push(c))
-    req.on('end', () => resolve(Buffer.concat(chunks)))
+    let size = 0
+    let rejected = false
+    req.on('data', (c) => {
+      if (rejected) return
+      size += c.length
+      if (size > maxBytes) {
+        rejected = true
+        reject(new Error('body too large'))
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => {
+      if (!rejected) resolve(Buffer.concat(chunks))
+    })
     req.on('error', reject)
   })
 }
@@ -141,22 +156,16 @@ export type CiWebhookDeps = {
   spawnFn: SpawnWatchdogFn
 }
 
-const defaultDeps = (): CiWebhookDeps => ({
-  secretForRepo,
-  repoRootFor,
-  spawnFn: defaultSpawnWatchdog,
-})
-
 export async function handleCiWebhookRequest(
   req: IncomingMessage,
   res: ServerResponse,
   repoSlug: string,
   deps: Partial<CiWebhookDeps> = {},
 ): Promise<void> {
-  const { secretForRepo: secretFn, repoRootFor: rootFn, spawnFn } = {
-    ...defaultDeps(),
-    ...deps,
-  }
+  const repos = deps.secretForRepo || deps.repoRootFor ? null : loadCiWebhookRepos()
+  const secretFn = deps.secretForRepo ?? ((slug: string) => secretForRepo(slug, repos ?? undefined))
+  const rootFn = deps.repoRootFor ?? ((slug: string) => repoRootFor(slug, repos ?? undefined))
+  const spawnFn = deps.spawnFn ?? defaultSpawnWatchdog
   if (req.method !== 'POST') {
     json(res, 405, { ok: false, error: 'method not allowed' })
     return
@@ -174,7 +183,12 @@ export async function handleCiWebhookRequest(
   let body: Buffer
   try {
     body = await readBody(req)
-  } catch {
+  } catch (e) {
+    const msg = (e as Error).message
+    if (msg === 'body too large') {
+      json(res, 413, { ok: false, error: 'payload too large' })
+      return
+    }
     json(res, 400, { ok: false, error: 'bad body' })
     return
   }
@@ -221,6 +235,14 @@ export function startCiWebhookServer(port = DEFAULT_PORT): Server | null {
     } catch (e) {
       json(res, 500, { ok: false, error: (e as Error).message })
     }
+  })
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      // Another TerMinal instance or local service owns :4848 — skip rather than crash.
+      server = null
+      return
+    }
+    throw err
   })
   server.listen(port, '127.0.0.1')
   return server
