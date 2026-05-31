@@ -2,7 +2,45 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseCodexSessionFile, parseCursorMeta } from './data'
+import { parseCodexSessionFile, parseCursorMeta, turnStateFromLines } from './data'
+
+describe('turnStateFromLines (fleet "needs-me" detection)', () => {
+  const asst = (stop: string, content: unknown) =>
+    JSON.stringify({ type: 'assistant', message: { id: 'm1', stop_reason: stop, content } })
+  const toolResult = JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result' }] } })
+
+  test('end_turn with plain text → idle (done, not awaiting)', () => {
+    expect(turnStateFromLines([asst('end_turn', [{ type: 'text', text: 'Done.' }])])).toEqual({
+      id: 'm1',
+      endTurn: true,
+      awaiting: false,
+    })
+  })
+
+  test('end_turn ending in a question → awaiting (clarifying)', () => {
+    const r = turnStateFromLines([asst('end_turn', [{ type: 'text', text: 'Which file should I edit?' }])])
+    expect(r?.endTurn).toBe(true)
+    expect(r?.awaiting).toBe(true)
+  })
+
+  test('trailing tool_use with no tool_result → awaiting (permission gate)', () => {
+    expect(turnStateFromLines([asst('tool_use', [{ type: 'tool_use', name: 'Bash' }])])).toEqual({
+      id: 'm1',
+      endTurn: false,
+      awaiting: true,
+    })
+  })
+
+  test('tool_use followed by a tool_result → working (not awaiting)', () => {
+    const r = turnStateFromLines([asst('tool_use', [{ type: 'tool_use' }]), toolResult])
+    expect(r?.awaiting).toBe(false)
+    expect(r?.endTurn).toBe(false)
+  })
+
+  test('no assistant line → null', () => {
+    expect(turnStateFromLines([toolResult])).toBeNull()
+  })
+})
 
 describe('parseCursorMeta', () => {
   test('extracts title/model/mode from a cursor chat meta row', () => {

@@ -153,7 +153,63 @@ export function findSessionFile(sessionId: string): string | null {
  * mid-work ('tool_use'); `id` dedupes so a completion fires once. Tail-only so
  * it's cheap to poll across many sessions.
  */
-export function lastAssistantTurn(file: string): { id: string; endTurn: boolean } | null {
+export type TurnState = { id: string; endTurn: boolean; awaiting: boolean }
+
+/**
+ * Pure: classify the last assistant turn from transcript tail lines.
+ * `awaiting` = needs the human: either a trailing `tool_use` with no following
+ * tool_result (parked at a permission gate) OR an `end_turn` whose text ends in
+ * a question (clarifying). Heuristic — visual-only signal, no notifications.
+ */
+export function turnStateFromLines(lines: string[]): TurnState | null {
+  let ai = -1
+  let m: any = null
+  let outer: any = null
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let o: any
+    try {
+      o = JSON.parse(lines[i])
+    } catch {
+      continue // first line in the window may be truncated — skip
+    }
+    if (o?.type === 'assistant') {
+      ai = i
+      outer = o
+      m = o.message || {}
+      break
+    }
+  }
+  if (ai < 0) return null
+  const id = String(m.id || outer.uuid || outer.timestamp || ai)
+  const endTurn = m.stop_reason === 'end_turn'
+  let awaiting = false
+  if (m.stop_reason === 'tool_use') {
+    // pending tool: no user/tool_result line follows the assistant's request
+    let resultAfter = false
+    for (let j = ai + 1; j < lines.length; j++) {
+      let o: any
+      try {
+        o = JSON.parse(lines[j])
+      } catch {
+        continue
+      }
+      if (o?.type === 'user') {
+        resultAfter = true
+        break
+      }
+    }
+    awaiting = !resultAfter
+  } else if (endTurn) {
+    awaiting = /\?\s*$/.test(textOf(m.content).trim())
+  }
+  return { id, endTurn, awaiting }
+}
+
+/**
+ * The most recent assistant turn in a transcript, by reading just the tail.
+ * Tail-only so it's cheap to poll across many sessions.
+ */
+export function lastAssistantTurn(file: string): TurnState | null {
   try {
     const size = statSync(file).size
     if (!size) return null
@@ -162,23 +218,10 @@ export function lastAssistantTurn(file: string): { id: string; endTurn: boolean 
     const buf = Buffer.alloc(len)
     readSync(fd, buf, 0, len, size - len)
     closeSync(fd)
-    const lines = buf.toString('utf8').split('\n').filter(Boolean)
-    for (let i = lines.length - 1; i >= 0; i--) {
-      let o: any
-      try {
-        o = JSON.parse(lines[i])
-      } catch {
-        continue // first line in the window may be truncated — skip
-      }
-      if (o?.type === 'assistant') {
-        const m = o.message || {}
-        return { id: String(m.id || o.uuid || o.timestamp || i), endTurn: m.stop_reason === 'end_turn' }
-      }
-    }
+    return turnStateFromLines(buf.toString('utf8').split('\n').filter(Boolean))
   } catch {
-    /* unreadable */
+    return null // unreadable
   }
-  return null
 }
 
 function emptyStats(sessionId = ''): TranscriptStats {

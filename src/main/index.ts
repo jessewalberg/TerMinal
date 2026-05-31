@@ -497,11 +497,13 @@ ipcMain.handle('fleet:list', () => {
   for (const [key, s] of sessions) {
     const sid = s.pinned.sessionId
     const st = readTranscriptStats(sid)
-    let status: 'working' | 'idle' = 'idle'
+    let status: 'working' | 'idle' | 'awaiting' = 'idle'
     const f = sid ? findSessionFile(sid) : null
     if (f) {
       const t = lastAssistantTurn(f)
-      if (t && !t.endTurn) status = 'working'
+      if (t?.awaiting)
+        status = 'awaiting' // parked at a permission gate or asked a question — needs you
+      else if (t && !t.endTurn) status = 'working'
     }
     out.push({
       key,

@@ -497,7 +497,7 @@ export type FleetSession = {
   repo: string
   branch: string
   model: string
-  status: 'working' | 'idle'
+  status: 'working' | 'idle' | 'awaiting'
   contextPct: number
   contextTokens: number
   contextLimit: number

@@ -21,6 +21,7 @@ export function FleetView({
   onNew: () => void
 }) {
   const working = sessions.filter((s) => s.status === 'working').length
+  const needsMe = sessions.filter((s) => s.status === 'awaiting').length
   return (
     <div className="flex h-full flex-col bg-[var(--gt-bg)]">
       <div className="flex shrink-0 items-center gap-2 border-b border-[var(--gt-border)] px-4 py-2.5">
@@ -30,6 +31,11 @@ export function FleetView({
           {sessions.length} session{sessions.length === 1 ? '' : 's'}
           {working > 0 && ` · ${working} working`}
         </span>
+        {needsMe > 0 && (
+          <span className="rounded-md border border-[var(--gt-yellow)]/30 bg-[var(--gt-yellow)]/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--gt-yellow)]">
+            {needsMe} needs you
+          </span>
+        )}
         <div className="flex-1" />
         <button
           onClick={onNew}
@@ -79,6 +85,7 @@ export function FleetView({
                       {list.map((s) => {
               const on = s.key === activeKey
               const wk = s.status === 'working'
+              const aw = s.status === 'awaiting'
               return (
                 <button
                   key={s.key}
@@ -86,20 +93,26 @@ export function FleetView({
                   className={`flex flex-col gap-2 rounded-xl border p-3 text-left transition-colors ${
                     on
                       ? 'border-[var(--gt-accent)]/60 bg-[var(--gt-accent)]/10'
-                      : 'border-[var(--gt-border)] bg-[var(--gt-panel)] hover:border-[var(--gt-accent)]/40 hover:bg-white/5'
+                      : aw
+                        ? 'border-[var(--gt-yellow)]/50 bg-[var(--gt-yellow)]/5 hover:bg-[var(--gt-yellow)]/10'
+                        : 'border-[var(--gt-border)] bg-[var(--gt-panel)] hover:border-[var(--gt-accent)]/40 hover:bg-white/5'
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <span
                       className={`h-2 w-2 shrink-0 rounded-full ${
-                        wk ? 'bg-[var(--gt-green)] gt-pulse' : 'bg-zinc-600'
+                        aw ? 'bg-[var(--gt-yellow)] gt-pulse' : wk ? 'bg-[var(--gt-green)] gt-pulse' : 'bg-zinc-600'
                       }`}
                     />
                     <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-zinc-100">
                       {s.name}
                     </span>
-                    <span className="shrink-0 text-[9.5px] uppercase tracking-wide text-zinc-600">
-                      {wk ? 'working' : 'idle'}
+                    <span
+                      className={`shrink-0 text-[9.5px] uppercase tracking-wide ${
+                        aw ? 'font-semibold text-[var(--gt-yellow)]' : 'text-zinc-600'
+                      }`}
+                    >
+                      {aw ? 'needs you' : wk ? 'working' : 'idle'}
                     </span>
                   </div>
 
