@@ -247,6 +247,17 @@ describe('handleCiWebhookRequest', () => {
     expect(get().status).toBe(405)
   })
 
+  test('rejects invalid json', async () => {
+    const body = Buffer.from('not-json')
+    const req = mockRequest(body, { 'x-gitlab-token': secret })
+    const { res, get } = mockResponse()
+
+    await handleCiWebhookRequest(req, res, 'TerMinal', deps)
+
+    expect(get().status).toBe(400)
+    expect(get().body.error).toBe('invalid json')
+  })
+
   test('rejects oversized body', async () => {
     const req = new EventEmitter() as IncomingMessage
     req.method = 'POST'

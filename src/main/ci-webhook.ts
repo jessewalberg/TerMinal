@@ -18,8 +18,6 @@ const DEFAULT_PORT = 4848
 /** GitLab pipeline webhook JSON is small; cap body reads to avoid memory exhaustion. */
 const MAX_BODY_BYTES = 256 * 1024
 
-export { repoRootFor, secretForRepo, loadCiWebhookRepos } from './ci-webhook-config'
-
 function locateWatchdogScript(repoRoot: string): string | null {
   const perRepo = join(repoRoot, '.agents', 'ci-watchdog.sh')
   if (existsSync(perRepo)) return perRepo
@@ -108,6 +106,8 @@ function readBody(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<Buff
       size += c.length
       if (size > maxBytes) {
         rejected = true
+        // Drain real sockets; EventEmitter mocks in tests omit destroy().
+        req.destroy?.()
         reject(new Error('body too large'))
         return
       }
