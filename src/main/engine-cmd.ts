@@ -23,7 +23,12 @@ export function buildEngineCmd(
     return `${shq(bin)} -p ${shq(prompt)} --dangerously-skip-permissions${modelFlag}`
   }
   if (engine === 'cursor') {
-    return `${shq(bin)} -p ${shq(prompt)} --force --workspace ${shq(worktree)}${modelFlag}`
+    // stream-json + --stream-partial-output: cursor's default `text` format
+    // buffers the whole turn and prints it only on completion, so a live run
+    // shows nothing for minutes (looks hung) — unlike claude/codex which stream
+    // through the script(1) PTY. NDJSON deltas are decoded back to plain text by
+    // createCursorStreamDecoder() in the runtime (see cursor-stream.ts).
+    return `${shq(bin)} -p ${shq(prompt)} --force --workspace ${shq(worktree)}${modelFlag} --output-format stream-json --stream-partial-output`
   }
   return `${shq(bin)} exec -s danger-full-access -C ${shq(worktree)}${modelFlag} ${shq(prompt)}`
 }

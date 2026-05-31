@@ -45,6 +45,11 @@ Specifics worth the *why*:
   `cursor-agent -p <prompt> --force --workspace <worktree> [--model]`. Interactive
   Cursor = `cursor-agent --force` (the run-everything equivalent of Codex's
   `danger-full-access`).
+  - _Update 2026-05-31 (see ADR-0003):_ the **headless** shape now also appends
+    `--output-format stream-json --stream-partial-output`. The default `text`
+    format buffers the whole turn until completion, so live runs looked hung with
+    empty logs; NDJSON deltas (decoded by `cursor-stream.ts`) now stream like
+    claude/codex. Interactive shape unchanged.
 - **[2.3] New-sessions-only in the picker.** We do **not** enumerate
   `~/.cursor/chats` for the resume list (Cursor mints its own id; the store is
   SQLite). Resume is handled by `cursor-agent`'s own `--resume/--continue` TUI

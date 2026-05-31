@@ -16,15 +16,19 @@ describe('buildEngineCmd', () => {
     )
   })
 
-  test('cursor → headless print, run-everything, workspace = worktree', () => {
+  test('cursor → headless print, run-everything, workspace = worktree, NDJSON stream', () => {
+    // cursor's default --output-format text BUFFERS the whole turn and emits it
+    // only on completion, so a live run shows nothing until the step ends (looks
+    // hung). stream-json + --stream-partial-output makes it emit incremental
+    // deltas the runtime decodes for live logs. See cursor-stream.ts.
     expect(buildEngineCmd('cursor-agent', 'cursor', '/wt', 'do thing')).toBe(
-      `cursor-agent -p 'do thing' --force --workspace /wt`,
+      `cursor-agent -p 'do thing' --force --workspace /wt --output-format stream-json --stream-partial-output`,
     )
   })
 
   test('a configured model is appended as --model for every engine', () => {
     expect(buildEngineCmd('cursor-agent', 'cursor', '/wt', 'x', 'composer-2.5')).toBe(
-      `cursor-agent -p x --force --workspace /wt --model composer-2.5`,
+      `cursor-agent -p x --force --workspace /wt --model composer-2.5 --output-format stream-json --stream-partial-output`,
     )
     expect(buildEngineCmd('claude', 'claude', '/wt', 'x', 'opus')).toBe(
       `claude -p x --dangerously-skip-permissions --model opus`,
@@ -36,7 +40,7 @@ describe('buildEngineCmd', () => {
 
   test('prompts with quotes/spaces are shell-escaped', () => {
     expect(buildEngineCmd('cursor-agent', 'cursor', '/my work', "it's done")).toBe(
-      `cursor-agent -p 'it'\\''s done' --force --workspace '/my work'`,
+      `cursor-agent -p 'it'\\''s done' --force --workspace '/my work' --output-format stream-json --stream-partial-output`,
     )
   })
 })
