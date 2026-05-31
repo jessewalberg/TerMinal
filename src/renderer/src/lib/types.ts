@@ -133,7 +133,7 @@ export type DocsTree = {
   categories: { id: DocCategory; label: string; items: DocEntry[] }[]
 }
 
-export type Engine = 'codex' | 'claude'
+export type Engine = 'codex' | 'claude' | 'cursor'
 export type SessionEngine = Engine | 'local'
 export type EngineCfg = { path: string; defaultModel: string }
 export type ForgePref = 'auto' | 'github' | 'gitlab'
@@ -164,6 +164,7 @@ export type SettingsPatch = Partial<Omit<Settings, 'telegram' | 'engines' | 'app
 export type EnvDetect = {
   codex: { found: boolean; path: string }
   claude: { found: boolean; path: string }
+  cursor: { found: boolean; path: string; authed: boolean }
   gh: { found: boolean; path: string; authed: boolean; authHost: string }
   glab: { found: boolean; path: string; authed: boolean; authHost: string }
   tgScripts: boolean
@@ -300,7 +301,7 @@ export type BgTask = {
   repo: string
   repoRoot: string
   prompt: string
-  engine: 'claude' | 'codex'
+  engine: Engine
   model?: string
   worktree: string
   branch: string
@@ -800,7 +801,7 @@ export type GtApi = {
     spawn: (input: {
       repoRoot: string
       prompt: string
-      engine?: 'claude' | 'codex'
+      engine?: Engine
       model?: string
     }) => Promise<BgTask | { error: string }>
     cancel: (id: string) => Promise<{ ok: boolean; error?: string }>

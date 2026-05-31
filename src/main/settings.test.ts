@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import { migrate, defaultSettings, worktreesFrom } from './settings'
+import { migrate, defaultSettings, worktreesFrom, engineBinaryName } from './settings'
 
 describe('migrate', () => {
   test('empty / garbage → defaults', () => {
@@ -62,6 +62,32 @@ describe('migrate', () => {
     expect(s.projectsDir).toBe('')
     expect(s.onboarded).toBe(false)
     expect(s.engines.codex.path).toBe('')
+  })
+})
+
+describe('engine parity (cursor)', () => {
+  test('defaults include all three engines', () => {
+    const s = defaultSettings()
+    expect(Object.keys(s.engines).sort()).toEqual(['claude', 'codex', 'cursor'])
+    expect(s.engines.cursor).toEqual({ path: '', defaultModel: '' })
+  })
+
+  test('engineBinaryName maps the cursor id to its real binary', () => {
+    // The engine id is "cursor" but the executable on PATH is "cursor-agent".
+    expect(engineBinaryName('cursor')).toBe('cursor-agent')
+    expect(engineBinaryName('codex')).toBe('codex')
+    expect(engineBinaryName('claude')).toBe('claude')
+  })
+
+  test('defaultEngine accepts cursor', () => {
+    expect(migrate({ defaultEngine: 'cursor' }).defaultEngine).toBe('cursor')
+  })
+
+  test('cursor engine cfg round-trips', () => {
+    const s = migrate({
+      engines: { cursor: { path: '/bin/cursor-agent', defaultModel: 'composer-2.5' } },
+    })
+    expect(s.engines.cursor).toEqual({ path: '/bin/cursor-agent', defaultModel: 'composer-2.5' })
   })
 })
 

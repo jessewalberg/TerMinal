@@ -2,7 +2,39 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseCodexSessionFile } from './data'
+import { parseCodexSessionFile, parseCursorMeta } from './data'
+
+describe('parseCursorMeta', () => {
+  test('extracts title/model/mode from a cursor chat meta row', () => {
+    const row = JSON.stringify({
+      agentId: 'e7b3c16e',
+      latestRootBlobId: '3f61',
+      name: 'Ghosty Terminal Naming',
+      mode: 'default',
+      isRunEverything: true,
+      createdAt: 1780152395269,
+      lastUsedModel: 'composer-2.5',
+    })
+    expect(parseCursorMeta(row)).toEqual({
+      agentId: 'e7b3c16e',
+      name: 'Ghosty Terminal Naming',
+      model: 'composer-2.5',
+      mode: 'default',
+      isRunEverything: true,
+      createdAt: 1780152395269,
+    })
+  })
+
+  test('tolerates missing fields without throwing', () => {
+    const m = parseCursorMeta('{}')
+    expect(m).toEqual({ agentId: '', name: '', model: '', mode: '', isRunEverything: false, createdAt: 0 })
+  })
+
+  test('returns null on non-JSON / garbage', () => {
+    expect(parseCursorMeta('not json')).toBeNull()
+    expect(parseCursorMeta('')).toBeNull()
+  })
+})
 
 describe('parseCodexSessionFile', () => {
   test('extracts picker metadata from Codex JSONL sessions', () => {

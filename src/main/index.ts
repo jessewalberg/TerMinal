@@ -34,6 +34,7 @@ function localProjectTemplateRoot(): string {
 }
 import {
   readTranscriptStats,
+  readCursorStats,
   readHarnessTdd,
   listSessions,
   findSessionFile,
@@ -165,11 +166,18 @@ function send(channel: string, ...args: unknown[]) {
 // generated tab key. Data IPC reads the *active* session; PTY IPC is routed by
 // key so every (even backgrounded) terminal keeps streaming.
 type SessionEngine = Engine | 'local'
-type Pinned = { sessionId: string; cwd: string; mode: '' | 'new' | 'resume'; name: string; engine: SessionEngine }
+type Pinned = {
+  sessionId: string
+  cwd: string
+  mode: '' | 'new' | 'resume'
+  name: string
+  engine: SessionEngine
+  startedAt: number // ms — used to attribute the cursor chat store this session created
+}
 const sessions = new Map<string, { pty: pty.IPty; pinned: Pinned }>()
 let activeKey = ''
 const cur = (): Pinned =>
-  sessions.get(activeKey)?.pinned ?? { sessionId: '', cwd: '', mode: '', name: '', engine: 'claude' }
+  sessions.get(activeKey)?.pinned ?? { sessionId: '', cwd: '', mode: '', name: '', engine: 'claude', startedAt: 0 }
 
 type StartOpts = {
   mode: 'new' | 'resume'
@@ -200,6 +208,18 @@ function startSession(key: string, opts: StartOpts) {
       args.push('resume', sessionId)
     } else {
       sessionId = randomUUID()
+    }
+  } else if (engine === 'cursor') {
+    // cursor-agent owns its own chat id; we key the session by our own uuid and
+    // launch with --force (run-everything), the interactive equivalent of
+    // codex's danger-full-access. Resume is via cursor's own --resume/--continue
+    // TUI inside the session (we don't enumerate ~/.cursor for the picker).
+    if (opts.mode === 'resume' && opts.sessionId) {
+      sessionId = opts.sessionId
+      args.push('--resume', sessionId)
+    } else {
+      sessionId = randomUUID()
+      args.push('--force')
     }
   } else if (opts.mode === 'resume' && opts.sessionId) {
     sessionId = opts.sessionId
@@ -240,7 +260,7 @@ function startSession(key: string, opts: StartOpts) {
 
   sessions.set(key, {
     pty: proc,
-    pinned: { sessionId, cwd, mode: opts.mode, name: opts.name || '', engine },
+    pinned: { sessionId, cwd, mode: opts.mode, name: opts.name || '', engine, startedAt: Date.now() },
   })
   activeKey = key
   watchSession()
@@ -727,7 +747,12 @@ ipcMain.on('pty:resize', (_e, key: string, size: { cols: number; rows: number })
 })
 
 // ---- data IPC (plugin pollers; all keyed to the attached session) ----
-ipcMain.handle('data:transcript', () => readTranscriptStats(cur().sessionId))
+ipcMain.handle('data:transcript', () => {
+  const c = cur()
+  // Cursor sessions read their (best-effort) telemetry from the ~/.cursor chat
+  // store; claude/codex read the claude-format transcript by session id.
+  return c.engine === 'cursor' ? readCursorStats(c.cwd, c.startedAt) : readTranscriptStats(c.sessionId)
+})
 ipcMain.handle('data:harness-tdd', () => readHarnessTdd(cur().cwd))
 ipcMain.handle('data:usage', () => readUsage())
 ipcMain.handle('data:git-status', () => gitStatus(cur().cwd))
@@ -968,7 +993,7 @@ ipcMain.handle('bg:get', (_e, id: string) => getBgTask(id))
 ipcMain.handle('bg:log', (_e, id: string) => readBgTaskLog(id))
 ipcMain.handle(
   'bg:spawn',
-  (_e, input: { repoRoot: string; prompt: string; engine?: 'claude' | 'codex'; model?: string }) =>
+  (_e, input: { repoRoot: string; prompt: string; engine?: Engine; model?: string }) =>
     spawnBgTask(input),
 )
 ipcMain.handle('bg:cancel', (_e, id: string) => cancelBgTask(id))

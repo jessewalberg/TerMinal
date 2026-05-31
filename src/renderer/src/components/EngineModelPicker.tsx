@@ -20,11 +20,18 @@ const MODELS: Record<Engine, { id: string; label: string }[]> = {
     { id: 'gpt-5', label: 'gpt-5' },
     { id: 'o4-mini', label: 'o4-mini' },
   ],
+  cursor: [
+    { id: 'composer-2.5', label: 'composer-2.5' },
+    { id: 'auto', label: 'auto' },
+    { id: 'sonnet-4.5', label: 'sonnet-4.5' },
+    { id: 'gpt-5.2', label: 'gpt-5.2' },
+  ],
 }
 
 const VENDOR: Record<Engine, string> = {
   claude: 'Anthropic Claude',
   codex: 'OpenAI Codex',
+  cursor: 'Cursor',
 }
 
 export function EngineModelPicker({

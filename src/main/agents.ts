@@ -21,10 +21,11 @@ import { enginePath, engineDefaultModel, resolvedWorktreesDir } from './settings
 import { readGlobalAgents, saveGlobalAgent } from './agents-global'
 import { fileHitl } from './hitl'
 import { composeSteps, pipelineLabel, type Step } from './pipelines'
+import { buildEngineCmd } from './engine-cmd'
 
 export { listPipelines, type PipelineId } from './pipelines'
 
-export type Engine = 'codex' | 'claude'
+export type Engine = 'codex' | 'claude' | 'cursor'
 
 // On-demand Codex agents. Each runs in its own git worktree off the default
 // branch; codex does the work, files tickets, and opens the PR itself. We just
@@ -674,12 +675,7 @@ export function resetAgentState(repoRoot: string, agentId: string): { ok: true }
 }
 
 function buildCmd(engine: Engine, worktree: string, prompt: string, model?: string): string {
-  const bin = enginePath(engine)
-  const modelFlag = model ? ` --model ${shq(model)}` : ''
-  if (engine === 'claude') {
-    return `${shq(bin)} -p ${shq(prompt)} --dangerously-skip-permissions${modelFlag}`
-  }
-  return `${shq(bin)} exec -s danger-full-access -C ${shq(worktree)}${modelFlag} ${shq(prompt)}`
+  return buildEngineCmd(enginePath(engine), engine, worktree, prompt, model)
 }
 
 // Pipeline definitions + composition are pure (see ./pipelines, unit-tested).
@@ -980,8 +976,8 @@ The sidecar JSON shape (every field optional except id + title):
     "description": "one-line summary",
     "icon":        "lucide-react icon name — Bot, BookText, ScanSearch, ListChecks, TestTube2, ShieldAlert, Gauge, PackageCheck, Eraser, Wrench, Activity, Zap, etc.",
     "opensPr":     true | false,
-    "engine":      "claude" | "codex"  (hint; runtime can override),
-    "model":       "haiku" | "sonnet" | "opus" | "gpt-5" | "gpt-5-codex" | "o4-mini"  (hint; optional),
+    "engine":      "claude" | "codex" | "cursor"  (hint; runtime can override),
+    "model":       "haiku" | "sonnet" | "opus" | "gpt-5" | "gpt-5-codex" | "o4-mini" | "composer-2.5"  (hint; optional),
     "inPlace":     true | false  (true ONLY if the agent manages worktrees itself — rare)
   }
 
@@ -999,6 +995,7 @@ The script body MUST follow this shape:
   - For LLM calls inside the script:
       claude -p "<prompt>" --dangerously-skip-permissions --model "\${TERMINAL_MODEL:-sonnet}"
       codex exec -s danger-full-access -C "\${TERMINAL_WORKTREE}" --model "\${TERMINAL_MODEL:-gpt-5}" "<prompt>"
+      cursor-agent -p "<prompt>" --force --workspace "\${TERMINAL_WORKTREE}" --model "\${TERMINAL_MODEL:-composer-2.5}"
   - For TerMinal helpers, use these (on PATH via ~/.config/TerMinal/bin/terminal-cli):
       terminal-cli ticket "<title>" "<body>"   # file a backlog ticket on TERMINAL_REPO
       terminal-cli hitl "<title>" "<action>"   # file a global HITL item + Telegram ping
@@ -1084,7 +1081,9 @@ export function convertAgentToScript(
   const cmd =
     engine === 'claude'
       ? `claude -p ${promptLit} --dangerously-skip-permissions \${TERMINAL_MODEL:+--model "$TERMINAL_MODEL"}`
-      : `codex exec -s danger-full-access -C "$TERMINAL_WORKTREE" \${TERMINAL_MODEL:+--model "$TERMINAL_MODEL"} ${promptLit}`
+      : engine === 'cursor'
+        ? `cursor-agent -p ${promptLit} --force --workspace "$TERMINAL_WORKTREE" \${TERMINAL_MODEL:+--model "$TERMINAL_MODEL"}`
+        : `codex exec -s danger-full-access -C "$TERMINAL_WORKTREE" \${TERMINAL_MODEL:+--model "$TERMINAL_MODEL"} ${promptLit}`
   const script = `#!/usr/bin/env bash
 # Auto-generated from agents.json by TerMinal's "Convert to script" action.
 # Edit freely. The runner picks up this .sh over the agents.json prompt entry.

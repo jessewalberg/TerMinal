@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { repoForCwd, repoRootOf } from './repo'
@@ -19,6 +20,7 @@ import { reviewForPrDir, newestReviewDirForRepo } from './review'
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects')
 const TASKS_DIR = join(homedir(), '.claude', 'tasks')
 const CODEX_SESSIONS_DIR = join(homedir(), '.codex', 'sessions')
+const CURSOR_CHATS_DIR = join(homedir(), '.cursor', 'chats')
 
 /** The agent's live todo list for a session (~/.claude/tasks/<id>/<n>.json). */
 export function readSessionTasks(sessionId: string): TaskItem[] {
@@ -445,10 +447,125 @@ function listCodexSessions(): SessionMeta[] {
     .filter((s): s is SessionMeta => !!s)
 }
 
-/** All sessions across all engines, newest first — for the entry picker. */
+/** All sessions across all engines, newest first — for the entry picker.
+ *  Cursor is intentionally excluded: it mints its own chat id (we can't key the
+ *  picker to a resumable id) and stores chats as SQLite, so resume is handled by
+ *  cursor-agent's own --resume/--continue TUI inside the session. */
 export function listSessions(): SessionMeta[] {
   const out = [...listClaudeSessions(), ...listCodexSessions()]
   return out.sort((a, b) => b.mtime - a.mtime)
+}
+
+// ---------------------------------------------------------------------------
+// Cursor live-session telemetry (best-effort)
+//
+// cursor-agent stores each chat as a SQLite db at
+//   ~/.cursor/chats/<chatId>/<groupUuid>/store.db   (+ -wal/-shm)
+// Only the `meta` row is reliably plaintext JSON; the message tree is in
+// partially-binary blobs we deliberately do NOT parse (we never fabricate
+// context%/token gauges we can't read). So the cockpit gets session title +
+// model + mode for a Cursor session, and the numeric widgets stay empty —
+// the same honest bar Codex sits at today.
+// ---------------------------------------------------------------------------
+
+export type CursorChatMeta = {
+  agentId: string
+  name: string
+  model: string
+  mode: string
+  isRunEverything: boolean
+  createdAt: number
+}
+
+/** Pure: parse the `meta` row JSON of a cursor chat store.db. */
+export function parseCursorMeta(json: string): CursorChatMeta | null {
+  let o: any
+  try {
+    o = JSON.parse(json)
+  } catch {
+    return null
+  }
+  if (!o || typeof o !== 'object') return null
+  return {
+    agentId: typeof o.agentId === 'string' ? o.agentId : '',
+    name: typeof o.name === 'string' ? o.name : '',
+    model: typeof o.lastUsedModel === 'string' ? o.lastUsedModel : '',
+    mode: typeof o.mode === 'string' ? o.mode : '',
+    isRunEverything: o.isRunEverything === true,
+    createdAt: typeof o.createdAt === 'number' ? o.createdAt : 0,
+  }
+}
+
+/** The store.db of the newest cursor chat whose db was written at or after
+ *  `sinceMs` — i.e. the chat cursor-agent created for the session we launched.
+ *  Attribution heuristic: cursor mints its own id and the Cursor IDE may have
+ *  other chats open, so we scope to "appeared since our launch" and take the
+ *  newest. Returns '' if none / store missing. */
+function newestCursorChatDb(sinceMs: number): string {
+  if (!existsSync(CURSOR_CHATS_DIR)) return ''
+  let bestPath = ''
+  let bestMtime = sinceMs
+  let chatIds: string[]
+  try {
+    chatIds = readdirSync(CURSOR_CHATS_DIR)
+  } catch {
+    return ''
+  }
+  for (const chatId of chatIds) {
+    const chatDir = join(CURSOR_CHATS_DIR, chatId)
+    let groups: string[]
+    try {
+      groups = readdirSync(chatDir)
+    } catch {
+      continue
+    }
+    for (const g of groups) {
+      const db = join(chatDir, g, 'store.db')
+      try {
+        const mt = statSync(db).mtimeMs
+        if (mt >= bestMtime) {
+          bestMtime = mt
+          bestPath = db
+        }
+      } catch {
+        /* not a chat dir */
+      }
+    }
+  }
+  return bestPath
+}
+
+/** Read the meta row of a cursor chat db via the sqlite3 CLI (no native dep —
+ *  same shell-out pattern as git/gh; handles the -wal automatically). */
+function readCursorMetaRow(db: string): CursorChatMeta | null {
+  try {
+    const out = execFileSync('sqlite3', [db, 'SELECT CAST(value AS TEXT) FROM meta LIMIT 1'], {
+      encoding: 'utf8',
+      timeout: 4000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return out ? parseCursorMeta(out) : null
+  } catch {
+    return null // sqlite3 missing, locked db, schema drift → graceful empty
+  }
+}
+
+/** Best-effort cockpit stats for a live cursor session (title/model/mode). */
+export function readCursorStats(cwd: string, startedAt: number): TranscriptStats {
+  const base = emptyStats('')
+  base.cwd = cwd
+  const db = newestCursorChatDb(startedAt || 0)
+  if (!db) return base
+  const meta = readCursorMetaRow(db)
+  if (!meta) return base
+  return {
+    ...base,
+    ok: true,
+    model: meta.model || 'cursor',
+    aiTitle: meta.name,
+    permissionMode: meta.isRunEverything ? 'run-everything' : meta.mode || '',
+    mtime: meta.createdAt,
+  }
 }
 
 // ---------------------------------------------------------------------------

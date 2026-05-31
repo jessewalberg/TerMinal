@@ -23,12 +23,18 @@ import { EngineModelPicker } from './EngineModelPicker'
 import { SkillHint } from './SkillHint'
 import openaiLogo from '../assets/openai.svg'
 import claudeLogo from '../assets/claude.svg'
+import cursorLogo from '../assets/cursor.svg'
 
-// Three-step launch picker: engine (codex/claude) → persona (none + built-ins)
-// → pipeline (single run, or chained review/iterate stages). onPick fires with
-// engine + persona id ('' = none) + pipeline id ('single' = just the task).
-const LOGO: Record<Engine, string> = { codex: openaiLogo, claude: claudeLogo }
-const VENDOR: Record<Engine, string> = { codex: 'OpenAI Codex', claude: 'Anthropic Claude' }
+// Three-step launch picker: engine (codex/claude/cursor) → persona (none +
+// built-ins) → pipeline (single run, or chained review/iterate stages). onPick
+// fires with engine + persona id ('' = none) + pipeline id ('single' = task).
+const ENGINES: Engine[] = ['claude', 'codex', 'cursor']
+const LOGO: Record<Engine, string> = { codex: openaiLogo, claude: claudeLogo, cursor: cursorLogo }
+const VENDOR: Record<Engine, string> = {
+  codex: 'OpenAI Codex',
+  claude: 'Anthropic Claude',
+  cursor: 'Cursor',
+}
 const PERSONA_ICON: Record<string, LucideIcon> = {
   ShieldCheck,
   Gauge,
@@ -72,13 +78,14 @@ export function EnginePicker({
 
   // Until detection resolves, assume available (avoids a flicker); once known,
   // disable engines that aren't installed and auto-pick when only one exists.
-  const avail = (e: Engine) => !env || (e === 'codex' ? env.codex.found : env.claude.found)
+  const avail = (e: Engine) => !env || !!env[e]?.found
   useEffect(() => {
     if (!env || engine !== null) return
-    const ok = (['codex', 'claude'] as Engine[]).filter(avail)
+    const ok = ENGINES.filter(avail)
     if (ok.length === 1) setEngine(ok[0])
   }, [env]) // eslint-disable-line react-hooks/exhaustive-deps
-  const engineOrder: Engine[] = defaultEngine === 'claude' ? ['claude', 'codex'] : ['codex', 'claude']
+  // Default engine first, then the rest in their canonical order.
+  const engineOrder: Engine[] = [defaultEngine, ...ENGINES.filter((e) => e !== defaultEngine)]
 
   const step = engine === null ? 1 : persona === null ? 2 : 3
   const back = () => (step === 3 ? setPersona(null) : setEngine(null))
@@ -115,7 +122,7 @@ export function EnginePicker({
         {step === 1 && (
           <>
             <p className="mb-3 text-[11.5px] text-zinc-500">1 · Launch with which engine?</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {engineOrder.map((e) => {
                 const ok = avail(e)
                 return (
@@ -137,9 +144,10 @@ export function EnginePicker({
                 )
               })}
             </div>
-            {env && !env.codex.found && !env.claude.found && (
+            {env && !env.codex.found && !env.claude.found && !env.cursor.found && (
               <p className="mt-3 text-[11px] text-[var(--gt-red)]">
-                Neither codex nor claude found on PATH. Install one, or set its path in Settings.
+                No engine (codex, claude, cursor) found on PATH. Install one, or set its path in
+                Settings.
               </p>
             )}
           </>

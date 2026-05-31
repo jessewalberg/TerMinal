@@ -7,10 +7,24 @@ import { homedir } from 'node:os'
 // read time" (e.g. projectsDir → your home dir). Legacy files in the old
 // { telegram, telegramControl } shape are migrated on read.
 
-export type EngineId = 'codex' | 'claude'
+export type EngineId = 'codex' | 'claude' | 'cursor'
 export type EngineCfg = {
   path: string // '' = use the bare binary name on PATH
-  defaultModel: string // '' = let claude/codex pick their own default
+  defaultModel: string // '' = let claude/codex/cursor pick their own default
+}
+
+// The set of known engines + the executable each resolves to on PATH. The
+// engine *id* is usually the binary name, but Cursor's CLI is `cursor-agent`,
+// so the id→binary indirection lives here (used by enginePath + detection).
+export const ENGINE_IDS: EngineId[] = ['codex', 'claude', 'cursor']
+const ENGINE_BIN: Record<EngineId, string> = {
+  codex: 'codex',
+  claude: 'claude',
+  cursor: 'cursor-agent',
+}
+/** The executable name for an engine id (cursor → cursor-agent, else the id). */
+export function engineBinaryName(engine: EngineId): string {
+  return ENGINE_BIN[engine] ?? engine
 }
 export type ForgePref = 'auto' | 'github' | 'gitlab'
 export type TelegramCfg = {
@@ -67,8 +81,9 @@ export function defaultSettings(): Settings {
     engines: {
       codex: { path: '', defaultModel: '' },
       claude: { path: '', defaultModel: '' },
+      cursor: { path: '', defaultModel: '' },
     },
-    defaultEngine: 'claude', // claude is the required engine; codex is optional
+    defaultEngine: 'claude', // claude is the required engine; codex/cursor are optional
     forge: 'auto',
     telegram: { notify: false, control: false, botToken: '', chatId: '' },
     apps: { editor: '', browser: '' },
@@ -99,10 +114,10 @@ export function migrate(raw: unknown): Settings {
   for (const k of ['projectsDir', 'worktreesDir', 'harnessDir', 'templateRepo'] as const) {
     if (typeof r[k] === 'string') s[k] = r[k]
   }
-  if (r.defaultEngine === 'codex' || r.defaultEngine === 'claude') s.defaultEngine = r.defaultEngine
+  if (ENGINE_IDS.includes(r.defaultEngine)) s.defaultEngine = r.defaultEngine
   if (r.forge === 'auto' || r.forge === 'github' || r.forge === 'gitlab') s.forge = r.forge
   if (r.engines && typeof r.engines === 'object') {
-    for (const e of ['codex', 'claude'] as EngineId[]) {
+    for (const e of ENGINE_IDS) {
       const cfg = r.engines[e]
       if (cfg && typeof cfg === 'object') {
         if (typeof cfg.path === 'string') s.engines[e].path = cfg.path
@@ -145,6 +160,7 @@ export function patchSettings(patch: SettingsPatch): Settings {
     engines: {
       codex: { ...cur.engines.codex, ...(patch.engines?.codex || {}) },
       claude: { ...cur.engines.claude, ...(patch.engines?.claude || {}) },
+      cursor: { ...cur.engines.cursor, ...(patch.engines?.cursor || {}) },
     },
     openrouter: { ...cur.openrouter, ...(patch.openrouter || {}) },
   }
@@ -183,12 +199,12 @@ export function resolvedTemplateRepo(): string {
   return readSettings().templateRepo || DEFAULT_TEMPLATE_REPO
 }
 
-/** The binary to invoke for an engine: explicit path > env (claude) > bare name. */
+/** The binary to invoke for an engine: explicit path > env (claude) > binary name. */
 export function enginePath(engine: EngineId): string {
   const p = readSettings().engines[engine]?.path
   if (p) return p
   if (engine === 'claude' && process.env.GT_CLAUDE_BIN) return process.env.GT_CLAUDE_BIN
-  return engine
+  return engineBinaryName(engine)
 }
 
 /** Per-engine model fallback. Returns '' when no fallback is set, in which

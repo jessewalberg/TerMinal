@@ -62,6 +62,17 @@ function resolveBin(nameOrPath: string): string {
   return which(nameOrPath)
 }
 
+/** `cursor-agent status` prints "✓ Logged in as <email>" when authed. Unlike
+ *  claude/codex (which we only check for presence), cursor exposes a cheap auth
+ *  probe, so we surface it for the Settings/onboarding readiness dot. */
+function cursorAuthProbe(cli: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(cli, ['status'], { timeout: 6000 }, (err, stdout, stderr) => {
+      resolve(/logged in/i.test(`${stdout || ''}\n${stderr || ''}`))
+    })
+  })
+}
+
 type AuthInfo = { authed: boolean; host: string }
 /** `<cli> auth status` — but glab exits non-zero if ANY configured host is
  *  unauthed (e.g. an unused gitlab.com entry) even when the self-hosted host you
@@ -79,6 +90,7 @@ function authProbe(cli: string): Promise<AuthInfo> {
 export type EnvDetect = {
   codex: { found: boolean; path: string }
   claude: { found: boolean; path: string }
+  cursor: { found: boolean; path: string; authed: boolean }
   gh: { found: boolean; path: string; authed: boolean; authHost: string }
   glab: { found: boolean; path: string; authed: boolean; authHost: string }
   tgScripts: boolean
@@ -104,16 +116,19 @@ export function detectApps(): { editors: string[]; browsers: string[] } {
 export async function detectEnv(): Promise<EnvDetect> {
   const codex = resolveBin(enginePath('codex'))
   const claude = resolveBin(enginePath('claude'))
+  const cursor = resolveBin(enginePath('cursor'))
   const gh = which('gh')
   const glab = which('glab')
   const none: AuthInfo = { authed: false, host: '' }
-  const [ghAuth, glabAuth] = await Promise.all([
+  const [ghAuth, glabAuth, cursorAuthed] = await Promise.all([
     gh ? authProbe(gh) : Promise.resolve(none),
     glab ? authProbe(glab) : Promise.resolve(none),
+    cursor ? cursorAuthProbe(cursor) : Promise.resolve(false),
   ])
   return {
     codex: { found: !!codex, path: codex },
     claude: { found: !!claude, path: claude },
+    cursor: { found: !!cursor, path: cursor, authed: cursorAuthed },
     gh: { found: !!gh, path: gh, authed: ghAuth.authed, authHost: ghAuth.host },
     glab: { found: !!glab, path: glab, authed: glabAuth.authed, authHost: glabAuth.host },
     tgScripts: existsSync(join(homedir(), '.claude', 'bin', 'telegram-notify.sh')),

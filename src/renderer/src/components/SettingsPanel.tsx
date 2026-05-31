@@ -395,10 +395,11 @@ export function SettingsPanel({ onClose, onRerunSetup }: { onClose: () => void; 
   const MODEL_OPTIONS: Record<Engine, string[]> = {
     claude: ['', 'haiku', 'sonnet', 'opus'],
     codex: ['', 'gpt-5', 'gpt-5-codex', 'o4-mini'],
+    cursor: ['', 'composer-2.5', 'auto', 'sonnet-4.5', 'gpt-5.2'],
   }
   const engineRow = (e: Engine, vendor: string) => {
-    const found = env ? (e === 'codex' ? env.codex.found : env.claude.found) : true
-    const detPath = env ? (e === 'codex' ? env.codex.path : env.claude.path) : ''
+    const found = env ? env[e].found : true
+    const detPath = env ? env[e].path : ''
     const defModel = s.engines[e].defaultModel
     return (
       <div key={e} className="mb-2">
@@ -511,11 +512,12 @@ export function SettingsPanel({ onClose, onRerunSetup }: { onClose: () => void; 
 
           {/* Engines */}
           <Section title="Engines" desc="The agent backends. Detected on your PATH; override the binary path if needed.">
-            {engineRow('codex', 'OpenAI Codex')}
             {engineRow('claude', 'Anthropic Claude')}
+            {engineRow('codex', 'OpenAI Codex')}
+            {engineRow('cursor', 'Cursor')}
             <div className="mt-2 flex items-center gap-2">
               <span className="text-[11px] text-zinc-500">Default:</span>
-              {(['codex', 'claude'] as Engine[]).map((e) => (
+              {(['claude', 'codex', 'cursor'] as Engine[]).map((e) => (
                 <button
                   key={e}
                   onClick={() => save({ defaultEngine: e })}

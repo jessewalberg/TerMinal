@@ -1,10 +1,12 @@
 import type { Engine } from '../lib/types'
 import openaiLogo from '../assets/openai.svg'
 import claudeLogo from '../assets/claude.svg'
+import cursorLogo from '../assets/cursor.svg'
 
 const LOGO: Record<Engine, string> = {
   codex: openaiLogo,
   claude: claudeLogo,
+  cursor: cursorLogo,
 }
 
 // Single source for the engine wordmark — anywhere we say "claude" or "codex"
