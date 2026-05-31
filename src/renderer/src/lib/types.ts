@@ -153,6 +153,8 @@ export type Settings = {
   openrouter: OpenRouterCfg
   harnessDir: string
   templateRepo: string
+  maxRunMs: number // per-run soft wall-clock cap (ms); 0 = off, default 3h
+  maxRunHardMs: number // per-run HARD cap (ms): SIGTERM when exceeded; 0 = off
 }
 export type SettingsPatch = Partial<Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter'>> & {
   telegram?: Partial<TelegramCfg>

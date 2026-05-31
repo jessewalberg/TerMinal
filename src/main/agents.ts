@@ -17,7 +17,8 @@ import { emitActivity } from './events'
 import { repoForCwd } from './repo'
 import { forgeFor } from './forge'
 import { getPersona } from './personas'
-import { enginePath, engineDefaultModel, resolvedWorktreesDir } from './settings'
+import { enginePath, engineDefaultModel, resolvedWorktreesDir, readSettings } from './settings'
+import { planWatchdogTimers } from './run-watchdog'
 import { readGlobalAgents, saveGlobalAgent } from './agents-global'
 import { fileHitl } from './hitl'
 import { composeSteps, pipelineLabel, type Step } from './pipelines'
@@ -805,9 +806,18 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
   }
 
   let settled = false
+  // Per-run wall-clock watchdog (ticket #15): armed below for non-inPlace runs.
+  // `reaped` lets the exit handler distinguish a hard-cap SIGTERM from a crash.
+  let watchdogTimers: ReturnType<typeof setTimeout>[] = []
+  let reaped = false
+  const clearWatchdog = () => {
+    watchdogTimers.forEach(clearTimeout)
+    watchdogTimers = []
+  }
   const finalize = (status: AgentRunStatus, exitCode?: number) => {
     if (settled) return
     settled = true
+    clearWatchdog()
     run.status = status
     run.endedAt = Date.now()
     run.exitCode = exitCode
@@ -909,12 +919,59 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     })
     p.on('exit', (code) => {
       if (run.status === 'canceled') return finalize('canceled', code ?? undefined)
+      if (reaped) return finalize('interrupted', code ?? undefined) // hard-cap SIGTERM, not a crash
       if (code !== 0) return finalize('failed', code ?? undefined)
       stepIdx++
       if (stepIdx < spec.steps.length) runStep()
       else finalize('done', 0)
     })
   }
+
+  // Arm the wall-clock watchdog for the whole run (ticket #15). inPlace runs are
+  // quick additive ops (ticket filing) — never capped. Caps come from Settings;
+  // default is warn-only (soft 3h, hard off). Timers fire relative to run start
+  // and are cleared in finalize(), so a healthy run never trips them.
+  if (!spec.inPlace) {
+    const { maxRunMs, maxRunHardMs } = readSettings()
+    const mins = (ms: number) => Math.round(ms / 60000)
+    for (const t of planWatchdogTimers(maxRunMs, maxRunHardMs)) {
+      watchdogTimers.push(
+        setTimeout(() => {
+          if (settled) return
+          if (t.action === 'warn') {
+            append(`\n[runtime cap] still running after ${mins(t.atMs)}m (soft cap) — left running; inspect or cancel.\n`)
+            emitActivity({
+              kind: 'error',
+              title: `Agent runtime soft cap · ${spec.title}`,
+              detail: `${spec.engine} · ${branch} · >${mins(t.atMs)}m`,
+              repo: repoLabel,
+              repoRoot,
+            })
+            fileHitl({
+              source: 'agent',
+              title: `Long-running agent · ${spec.title}`,
+              action: 'inspect the run; cancel it if it is stuck, or raise maxRunMs if this is expected',
+              detail: `run ${run.id.slice(0, 8)} on ${branch} exceeded the ${mins(t.atMs)}m soft cap and is still running`,
+              repo: basename(repoRoot),
+              repoRoot,
+            })
+          } else {
+            reaped = true
+            append(`\n[runtime cap] hard cap of ${mins(t.atMs)}m exceeded — sending SIGTERM (worktree + commits preserved)\n`)
+            emitActivity({
+              kind: 'error',
+              title: `Agent reaped at hard cap · ${spec.title}`,
+              detail: `${spec.engine} · ${branch} · >${mins(t.atMs)}m`,
+              repo: repoLabel,
+              repoRoot,
+            })
+            procs.get(run.id)?.kill('SIGTERM')
+          }
+        }, Math.min(t.atMs, 2_147_483_647)), // clamp: a >24.8d delay overflows setTimeout and fires immediately
+      )
+    }
+  }
+
   runStep()
   return run
 }

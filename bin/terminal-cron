@@ -741,6 +741,23 @@ async function runSchedule(id) {
     // global config's default project.
     ...(sched.env && typeof sched.env === 'object' ? sched.env : {}),
   }
+  // Per-run wall-clock soft cap (ticket #15): warn-then-reap. Caps read from
+  // settings.json (maxRunMs soft, default 3h; maxRunHardMs hard, default off=0).
+  // SELF-CONTAINED runner — no app-bundle import — so the tiny policy is inlined
+  // here (mirrors src/main/run-watchdog.ts). Warn-only by default; a hard
+  // SIGTERM fires only if the operator sets maxRunHardMs > 0.
+  let capSoft = 3 * 60 * 60 * 1000
+  let capHard = 0
+  try {
+    const s = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'))
+    if (Number.isFinite(s?.maxRunMs) && s.maxRunMs >= 0) capSoft = s.maxRunMs
+    if (Number.isFinite(s?.maxRunHardMs) && s.maxRunHardMs >= 0) capHard = s.maxRunHardMs
+  } catch {
+    /* settings unreadable — use defaults */
+  }
+  if (capSoft > 0 && capHard > 0 && capHard < capSoft) capHard = capSoft // never reap before warning
+  const capMins = (ms) => Math.round(ms / 60000)
+
   const code = await new Promise((resolve) => {
     const p = spawn('script', ['-q', '/dev/null', shell, '-l', '-c', cmd], {
       cwd: worktree,
@@ -754,11 +771,56 @@ async function runSchedule(id) {
     // hours — long enough that downstream cron ticks treat the schedule
     // as in-progress and skip themselves.
     if (p.pid) writeRec({ status: 'running', pid: p.pid })
+    // Wall-clock timers, cleared on exit so a healthy run never trips them.
+    const capTimers = []
+    const clearCaps = () => {
+      capTimers.forEach(clearTimeout)
+      capTimers.length = 0
+    }
+    if (capSoft > 0)
+      capTimers.push(
+        setTimeout(() => {
+          appendFileSync(
+            logFile,
+            `\n[runtime cap] still running after ${capMins(capSoft)}m (soft cap) — left running; inspect or cancel.\n`,
+          )
+          activity({
+            kind: 'tests-fail',
+            title: `Scheduled runtime soft cap · ${sched.agentTitle}`,
+            detail: `${sched.engine} · ${branch} · >${capMins(capSoft)}m`,
+            repo: sched.repoLabel,
+            repoRoot: repo,
+          })
+          fileHitl({
+            title: `Long-running scheduled run · ${sched.agentTitle}`,
+            action: `exceeded ${capMins(capSoft)}m soft cap — still running; inspect or cancel`,
+            detail: `run ${runId} · ${branch}`,
+            repo: sched.repoLabel,
+            repoRoot: repo,
+            runId,
+            runSource: 'cron',
+          })
+        }, Math.min(capSoft, 2_147_483_647)),
+      )
+    if (capHard > 0)
+      capTimers.push(
+        setTimeout(() => {
+          appendFileSync(
+            logFile,
+            `\n[runtime cap] hard cap of ${capMins(capHard)}m exceeded — sending SIGTERM (worktree + commits preserved)\n`,
+          )
+          p.kill('SIGTERM')
+        }, Math.min(capHard, 2_147_483_647)),
+      )
     p.on('error', (err) => {
+      clearCaps()
       appendFileSync(logFile, `\n[spawn error] ${err.message}\n`)
       resolve(1)
     })
-    p.on('exit', (c) => resolve(c ?? 1))
+    p.on('exit', (c) => {
+      clearCaps()
+      resolve(c ?? 1)
+    })
   })
 
   const status = code === 0 ? 'done' : 'failed'

@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
+import { DEFAULT_SOFT_RUN_MS } from './run-watchdog'
 
 // Persisted, self-configuring app settings. Every key has a working default —
 // a fresh install (no file) runs fine, and an empty string means "resolve at
@@ -58,6 +59,13 @@ export type Settings = {
   openrouter: OpenRouterCfg
   harnessDir: string // optional cross-repo review-artifact store
   templateRepo: string // scaffold source
+  /** Per-run wall-clock SOFT cap (ms): when a run exceeds this it logs a
+   *  "[runtime cap]" line, emits an error activity, and files HITL — but keeps
+   *  running. 0 = off. Default 3h. See run-watchdog.ts / ticket #15. */
+  maxRunMs: number
+  /** Per-run wall-clock HARD cap (ms): SIGTERM the run when exceeded (worktree
+   *  + commits survive). 0 = off (the default — warn-only). Opt-in only. */
+  maxRunHardMs: number
 }
 
 // A patch may carry partial nested telegram/engines/apps without losing siblings.
@@ -90,6 +98,8 @@ export function defaultSettings(): Settings {
     openrouter: { apiKey: '', defaultModel: 'anthropic/claude-haiku-4.5' },
     harnessDir: '',
     templateRepo: '',
+    maxRunMs: DEFAULT_SOFT_RUN_MS,
+    maxRunHardMs: 0,
   }
 }
 
@@ -113,6 +123,9 @@ export function migrate(raw: unknown): Settings {
   if (typeof r.onboarded === 'boolean') s.onboarded = r.onboarded
   for (const k of ['projectsDir', 'worktreesDir', 'harnessDir', 'templateRepo'] as const) {
     if (typeof r[k] === 'string') s[k] = r[k]
+  }
+  for (const k of ['maxRunMs', 'maxRunHardMs'] as const) {
+    if (typeof r[k] === 'number' && Number.isFinite(r[k]) && r[k] >= 0) s[k] = r[k]
   }
   if (ENGINE_IDS.includes(r.defaultEngine)) s.defaultEngine = r.defaultEngine
   if (r.forge === 'auto' || r.forge === 'github' || r.forge === 'gitlab') s.forge = r.forge
