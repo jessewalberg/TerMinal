@@ -88,13 +88,17 @@ successful deploy. That's an agent script, not app code.
 
 ---
 
-### Update — 2026-05-31 (largely implemented)
+### Update — 2026-05-31 (core shipped)
 
-The auto-capture half shipped: a `deploy` ActivityKind (events.ts + renderer
-mirror, classifier pattern, Activity icon/label/tone, NOTIFY:false), a
-`terminal-cli deploy "<env>" "[sha]"` subcommand, and `cf-builds.ts` — a
-read-only Cloudflare Workers deployments poller (off until a CF token +
-account id in Settings + a `~/.config/TerMinal/cf-builds.json` watch list).
-Deploy events now flow to the feed, tray, and Factory tab. Remaining: a
-per-repo `/deploy` skill calling `terminal-cli deploy` after `wrangler
-deploy`/send, and (optional) extending `cycle.ts` to a deploy funnel stage.
+The core of this ticket shipped: a `deploy` ActivityKind (events.ts + renderer
+mirror, classifier ship/publish pattern, Activity icon/label/tone, NOTIFY:false)
+and a `terminal-cli deploy "<env>" "[sha]"` subcommand. Deploy events flow to
+the feed (self-registering "deploy" filter), tray, and Factory tab.
+
+An auto-capture Cloudflare Workers deployments poller (`cf-builds.ts`) was
+built and then **removed by decision** (didn't want an API-token poller). So
+the ledger stays **manual / skill-emitted**, exactly the opt-in model this
+ticket scoped. Remaining: a per-repo `/deploy` skill calling `terminal-cli
+deploy` after `wrangler deploy`/send, the optional Telegram `/deploys` alias,
+and (optional) a `cycle.ts` deploy funnel stage. If auto-capture is ever
+wanted again, the removed poller is recoverable from git history.

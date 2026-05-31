@@ -18,19 +18,15 @@ describe('secrets at rest (seal/open)', () => {
     s.telegram.botToken = 'bot:abc'
     s.telegram.chatId = '999'
     s.openrouter.apiKey = 'sk-or-1'
-    s.cloudflare.apiToken = 'cf-tok'
-    s.cloudflare.accountId = 'acc-123'
     return s
   }
 
-  test('seal transforms only the secret fields, not identifiers/config', () => {
+  test('seal transforms only the secret fields, not config', () => {
     const sealed = sealSecrets(withSecrets(), seal)
     expect(sealed.telegram.botToken).toBe('ENC#bot:abc')
     expect(sealed.telegram.chatId).toBe('ENC#999')
     expect(sealed.openrouter.apiKey).toBe('ENC#sk-or-1')
-    expect(sealed.cloudflare.apiToken).toBe('ENC#cf-tok')
-    // identifiers + non-secret config stay plaintext
-    expect(sealed.cloudflare.accountId).toBe('acc-123')
+    // non-secret config stays plaintext
     expect(sealed.openrouter.defaultModel).toBe('anthropic/claude-haiku-4.5')
   })
 
@@ -38,12 +34,11 @@ describe('secrets at rest (seal/open)', () => {
     const opened = openSecrets(sealSecrets(withSecrets(), seal), open)
     expect(opened.telegram.botToken).toBe('bot:abc')
     expect(opened.openrouter.apiKey).toBe('sk-or-1')
-    expect(opened.cloudflare.apiToken).toBe('cf-tok')
   })
 
   test('open passes legacy plaintext through (no enc prefix → unchanged)', () => {
     const legacy = withSecrets() // plaintext on disk, never sealed
-    expect(openSecrets(legacy, open).cloudflare.apiToken).toBe('cf-tok')
+    expect(openSecrets(legacy, open).openrouter.apiKey).toBe('sk-or-1')
   })
 
   test('empty secrets are left untouched (not sealed)', () => {
@@ -140,16 +135,6 @@ describe('engine parity (cursor)', () => {
       engines: { cursor: { path: '/bin/cursor-agent', defaultModel: 'composer-2.5' } },
     })
     expect(s.engines.cursor).toEqual({ path: '/bin/cursor-agent', defaultModel: 'composer-2.5' })
-  })
-})
-
-describe('cloudflare creds', () => {
-  test('round-trip apiToken + accountId', () => {
-    const s = migrate({ cloudflare: { apiToken: 'cf-tok', accountId: 'acc-123' } })
-    expect(s.cloudflare).toEqual({ apiToken: 'cf-tok', accountId: 'acc-123' })
-  })
-  test('default is empty (poller off)', () => {
-    expect(defaultSettings().cloudflare).toEqual({ apiToken: '', accountId: '' })
   })
 })
 

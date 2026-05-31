@@ -29,9 +29,9 @@ Implemented in settings.ts: `sealSecrets`/`openSecrets` (pure, injected crypto,
 unit-tested for round-trip + legacy-plaintext passthrough + empty-skip), an
 `initSecretSealer(safeStorage)` wired at app-ready in index.ts (kept electron
 out of settings.ts imports so it stays test-safe + ESM-safe). Secret paths
-sealed: `telegram.botToken`, `telegram.chatId`, `openrouter.apiKey`,
-`cloudflare.apiToken` (identifiers like `accountId` stay plaintext). In-memory
-Settings remain plaintext; only the on-disk file is `enc:`-prefixed base64.
+sealed: `telegram.botToken`, `telegram.chatId`, `openrouter.apiKey` (non-secret
+config stays plaintext). In-memory Settings remain plaintext; only the on-disk
+file is `enc:`-prefixed base64.
 Existing plaintext files keep working and upgrade on the next write. Falls back
 to plaintext if `isEncryptionAvailable()` is false. 147 pass, released.
 

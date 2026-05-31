@@ -43,12 +43,6 @@ export type OpenRouterCfg = {
   apiKey: string
   defaultModel: string // e.g. 'anthropic/claude-haiku-4.5'
 }
-/** Cloudflare API creds for the read-only Workers-deployments poller (off until
- *  both are set). Token needs Workers Scripts:Read on the account. */
-export type CloudflareCfg = {
-  apiToken: string
-  accountId: string
-}
 export type Settings = {
   onboarded: boolean
   projectsDir: string // '' → resolved to your home dir
@@ -62,20 +56,16 @@ export type Settings = {
    *  Used for one-shot calls inside scripts: health-check classifiers, cheap
    *  precheck escalations, MR-authorship sniffing, etc. Optional. */
   openrouter: OpenRouterCfg
-  cloudflare: CloudflareCfg
   harnessDir: string // optional cross-repo review-artifact store
   templateRepo: string // scaffold source
 }
 
 // A patch may carry partial nested telegram/engines/apps without losing siblings.
-export type SettingsPatch = Partial<
-  Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter' | 'cloudflare'>
-> & {
+export type SettingsPatch = Partial<Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter'>> & {
   telegram?: Partial<TelegramCfg>
   engines?: Partial<Record<EngineId, Partial<EngineCfg>>>
   apps?: Partial<AppsCfg>
   openrouter?: Partial<OpenRouterCfg>
-  cloudflare?: Partial<CloudflareCfg>
 }
 
 const DEFAULT_EDITOR = 'Cursor'
@@ -98,7 +88,6 @@ export function defaultSettings(): Settings {
     telegram: { notify: false, control: false, botToken: '', chatId: '' },
     apps: { editor: '', browser: '' },
     openrouter: { apiKey: '', defaultModel: 'anthropic/claude-haiku-4.5' },
-    cloudflare: { apiToken: '', accountId: '' },
     harnessDir: '',
     templateRepo: '',
   }
@@ -144,10 +133,6 @@ export function migrate(raw: unknown): Settings {
     if (typeof r.openrouter.apiKey === 'string') s.openrouter.apiKey = r.openrouter.apiKey
     if (typeof r.openrouter.defaultModel === 'string') s.openrouter.defaultModel = r.openrouter.defaultModel
   }
-  if (r.cloudflare && typeof r.cloudflare === 'object') {
-    if (typeof r.cloudflare.apiToken === 'string') s.cloudflare.apiToken = r.cloudflare.apiToken
-    if (typeof r.cloudflare.accountId === 'string') s.cloudflare.accountId = r.cloudflare.accountId
-  }
   return s
 }
 
@@ -157,12 +142,7 @@ export function migrate(raw: unknown): Settings {
 // is sealed. Identifiers (accountId) and config stay plaintext. Existing
 // plaintext files keep working and silently upgrade on the next write.
 
-const SECRET_PATHS = [
-  'telegram.botToken',
-  'telegram.chatId',
-  'openrouter.apiKey',
-  'cloudflare.apiToken',
-] as const
+const SECRET_PATHS = ['telegram.botToken', 'telegram.chatId', 'openrouter.apiKey'] as const
 const ENC = 'enc:'
 
 /** Pure: deep-copy `obj` applying `fn` to each non-empty string at a secret path. */
@@ -249,7 +229,6 @@ export function patchSettings(patch: SettingsPatch): Settings {
       cursor: { ...cur.engines.cursor, ...(patch.engines?.cursor || {}) },
     },
     openrouter: { ...cur.openrouter, ...(patch.openrouter || {}) },
-    cloudflare: { ...cur.cloudflare, ...(patch.cloudflare || {}) },
   }
   cache = next // in-memory stays plaintext
   try {

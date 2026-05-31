@@ -699,40 +699,6 @@ export function SettingsPanel({ onClose, onRerunSetup }: { onClose: () => void; 
             </div>
           </Section>
 
-          {/* Cloudflare — read-only Workers deploy poller (#0007) */}
-          <Section
-            title="Cloudflare (Workers deploy events)"
-            desc="Read-only: turns Workers deployments into 'deploy' activity events so merged ≠ shipped. Off until both fields are set AND ~/.config/TerMinal/cf-builds.json lists workers. Token needs Workers Scripts:Read."
-          >
-            <div className="space-y-2">
-              <input
-                defaultValue={s.cloudflare.apiToken}
-                onBlur={(e) =>
-                  e.target.value !== s.cloudflare.apiToken &&
-                  save({ cloudflare: { apiToken: e.target.value.trim() } })
-                }
-                placeholder="Cloudflare API token"
-                spellCheck={false}
-                type="password"
-                className={`${inp} font-mono`}
-              />
-              <input
-                defaultValue={s.cloudflare.accountId}
-                onBlur={(e) =>
-                  e.target.value !== s.cloudflare.accountId &&
-                  save({ cloudflare: { accountId: e.target.value.trim() } })
-                }
-                placeholder="Cloudflare account id"
-                spellCheck={false}
-                className={`${inp} font-mono`}
-              />
-              <p className="text-[10px] text-zinc-600">
-                Watch list: <code className="text-zinc-500">cf-builds.json</code> ={' '}
-                <code className="text-zinc-500">{'{ "workers": [{ "name": "my-worker", "repo": "my-repo" }] }'}</code>
-              </p>
-            </div>
-          </Section>
-
           {/* Setup / integrations */}
           <Section title="Setup & integrations" desc="One-time helpers for a fresh machine. Agents inherit your global ~/.claude and ~/.codex config + skills.">
             <div className="space-y-2">

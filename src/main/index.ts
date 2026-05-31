@@ -124,7 +124,6 @@ import {
   runScheduleNow,
 } from './launchd'
 import { registerMcpEverywhere } from './mcp-register'
-import { startCfBuildsPoll } from './cf-builds'
 import { readCronRuns, readCronRunLog, listAllRuns, sweepStaleCronRuns } from './cron-runs'
 import { summaryFor, agentROI, dailySpend, listAIRuns, type Range } from './ai-runs'
 import { startAICollectionLoop } from './ai-collectors'
@@ -1217,10 +1216,6 @@ app.whenReady().then(() => {
   startBgWatcher()
   // Budget watcher — fires HITL pings at warnAt thresholds.
   startBudgetWatcher()
-  // Cloudflare Workers deploy poller (#0007) — turns CF deployments into
-  // `deploy` activity events so "merged" stops reading as "shipped". No-op
-  // until a CF token + account id (Settings) and a cf-builds.json watch list.
-  startCfBuildsPoll()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
