@@ -151,13 +151,84 @@ export function migrate(raw: unknown): Settings {
   return s
 }
 
+// --- secrets at rest ---------------------------------------------------------
+// Encrypt credential fields in settings.json via Electron safeStorage (macOS
+// Keychain). In-memory Settings always hold PLAINTEXT — only the on-disk file
+// is sealed. Identifiers (accountId) and config stay plaintext. Existing
+// plaintext files keep working and silently upgrade on the next write.
+
+const SECRET_PATHS = [
+  'telegram.botToken',
+  'telegram.chatId',
+  'openrouter.apiKey',
+  'cloudflare.apiToken',
+] as const
+const ENC = 'enc:'
+
+/** Pure: deep-copy `obj` applying `fn` to each non-empty string at a secret path. */
+function transformSecrets<T extends Record<string, any>>(obj: T, fn: (v: string) => string): T {
+  const copy = structuredClone(obj)
+  for (const path of SECRET_PATHS) {
+    const segs = path.split('.')
+    let cur: any = copy
+    for (let i = 0; i < segs.length - 1 && cur; i++) cur = cur[segs[i]]
+    const leaf = segs[segs.length - 1]
+    if (cur && typeof cur === 'object' && typeof cur[leaf] === 'string' && cur[leaf] !== '') {
+      cur[leaf] = fn(cur[leaf])
+    }
+  }
+  return copy
+}
+
+/** Seal secret fields for disk (inject the crypto so it's unit-testable). */
+export function sealSecrets<T extends Record<string, any>>(s: T, seal: (v: string) => string): T {
+  return transformSecrets(s, seal)
+}
+/** Open secret fields read from disk; non-`enc:` values pass through unchanged. */
+export function openSecrets<T extends Record<string, any>>(raw: T, open: (v: string) => string): T {
+  return transformSecrets(raw, open)
+}
+
+export type SecretStore = {
+  isEncryptionAvailable(): boolean
+  encryptString(plain: string): Buffer
+  decryptString(enc: Buffer): string
+}
+// Default = passthrough (tests, headless, or before init). Replaced once the
+// app is ready and Electron safeStorage is available.
+let secretCrypto = { seal: (v: string) => v, open: (v: string) => v }
+
+/** Wire real encryption. Called once at app-ready with Electron's safeStorage
+ *  (kept out of this module's imports so settings.ts stays electron-free). */
+export function initSecretSealer(ss: SecretStore): void {
+  if (!ss || !ss.isEncryptionAvailable()) return // leave passthrough — store plaintext
+  secretCrypto = {
+    seal: (v) => {
+      try {
+        return ENC + ss.encryptString(v).toString('base64')
+      } catch {
+        return v
+      }
+    },
+    open: (v) => {
+      if (!v.startsWith(ENC)) return v // legacy plaintext
+      try {
+        return ss.decryptString(Buffer.from(v.slice(ENC.length), 'base64'))
+      } catch {
+        return v
+      }
+    },
+  }
+  cache = null // force a decrypt-aware re-read on next access
+}
+
 const FILE = join(homedir(), '.config', 'TerMinal', 'settings.json')
 
 let cache: Settings | null = null
 export function readSettings(): Settings {
   if (cache) return cache
   try {
-    cache = migrate(JSON.parse(readFileSync(FILE, 'utf8')))
+    cache = migrate(openSecrets(JSON.parse(readFileSync(FILE, 'utf8')), secretCrypto.open))
   } catch {
     cache = defaultSettings()
   }
@@ -180,10 +251,10 @@ export function patchSettings(patch: SettingsPatch): Settings {
     openrouter: { ...cur.openrouter, ...(patch.openrouter || {}) },
     cloudflare: { ...cur.cloudflare, ...(patch.cloudflare || {}) },
   }
-  cache = next
+  cache = next // in-memory stays plaintext
   try {
     mkdirSync(dirname(FILE), { recursive: true })
-    writeFileSync(FILE, JSON.stringify(next, null, 2))
+    writeFileSync(FILE, JSON.stringify(sealSecrets(next, secretCrypto.seal), null, 2)) // sealed on disk
   } catch {
     /* best effort */
   }

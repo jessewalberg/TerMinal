@@ -1,5 +1,57 @@
 import { test, expect, describe } from 'bun:test'
-import { migrate, defaultSettings, worktreesFrom, engineBinaryName } from './settings'
+import {
+  migrate,
+  defaultSettings,
+  worktreesFrom,
+  engineBinaryName,
+  sealSecrets,
+  openSecrets,
+} from './settings'
+
+describe('secrets at rest (seal/open)', () => {
+  // Injected fake crypto so the pure transform is testable without electron.
+  const seal = (v: string) => `ENC#${v}`
+  const open = (v: string) => (v.startsWith('ENC#') ? v.slice(4) : v)
+
+  const withSecrets = () => {
+    const s = defaultSettings()
+    s.telegram.botToken = 'bot:abc'
+    s.telegram.chatId = '999'
+    s.openrouter.apiKey = 'sk-or-1'
+    s.cloudflare.apiToken = 'cf-tok'
+    s.cloudflare.accountId = 'acc-123'
+    return s
+  }
+
+  test('seal transforms only the secret fields, not identifiers/config', () => {
+    const sealed = sealSecrets(withSecrets(), seal)
+    expect(sealed.telegram.botToken).toBe('ENC#bot:abc')
+    expect(sealed.telegram.chatId).toBe('ENC#999')
+    expect(sealed.openrouter.apiKey).toBe('ENC#sk-or-1')
+    expect(sealed.cloudflare.apiToken).toBe('ENC#cf-tok')
+    // identifiers + non-secret config stay plaintext
+    expect(sealed.cloudflare.accountId).toBe('acc-123')
+    expect(sealed.openrouter.defaultModel).toBe('anthropic/claude-haiku-4.5')
+  })
+
+  test('seal then open round-trips back to plaintext', () => {
+    const opened = openSecrets(sealSecrets(withSecrets(), seal), open)
+    expect(opened.telegram.botToken).toBe('bot:abc')
+    expect(opened.openrouter.apiKey).toBe('sk-or-1')
+    expect(opened.cloudflare.apiToken).toBe('cf-tok')
+  })
+
+  test('open passes legacy plaintext through (no enc prefix → unchanged)', () => {
+    const legacy = withSecrets() // plaintext on disk, never sealed
+    expect(openSecrets(legacy, open).cloudflare.apiToken).toBe('cf-tok')
+  })
+
+  test('empty secrets are left untouched (not sealed)', () => {
+    const sealed = sealSecrets(defaultSettings(), seal)
+    expect(sealed.telegram.botToken).toBe('')
+    expect(sealed.openrouter.apiKey).toBe('')
+  })
+})
 
 describe('migrate', () => {
   test('empty / garbage → defaults', () => {

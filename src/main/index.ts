@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, clipboard, Tray, Menu, nativeImage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, clipboard, Tray, Menu, nativeImage, safeStorage } from 'electron'
 import { join, basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -63,6 +63,7 @@ import { scaffoldProject } from './scaffold'
 import {
   readSettings,
   patchSettings,
+  initSecretSealer,
   telegramControlEnabled,
   resolvedProjectsDir,
   resolvedEditorApp,
@@ -1197,6 +1198,9 @@ ipcMain.handle('files:delete', (_e, rel: string) => removeEntry(filesRoot(), rel
 process.on('uncaughtException', (e) => console.error('[gt] uncaught:', e))
 
 app.whenReady().then(() => {
+  // Encrypt credential fields in settings.json at rest (macOS Keychain). Must
+  // run before anything reads settings so encrypted values decrypt correctly.
+  initSecretSealer(safeStorage)
   fixPath() // packaged app has a minimal PATH — recover brew CLIs (glab/gh/…)
   createWindow()
   // App-side watchdog. Catches phantom cron runs (schedule deleted before
