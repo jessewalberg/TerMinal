@@ -524,6 +524,31 @@ ipcMain.handle('fleet:list', () => {
   }
   return out
 })
+// Cross-repo PR/MR triage: bucket counts (ready / changes / needs-review) for
+// every KNOWN repo (open sessions + scheduled), so "which PRs are ready across
+// everything" has one home. Reuses the 60s-cached mrSummary per repo; fetched
+// on-demand by the Triage tab, not polled (the forge CLI is slow to fan out).
+ipcMain.handle('fleet:mrs', async () => {
+  const roots = new Map<string, string>() // repoRoot → display label
+  for (const s of sessions.values()) {
+    const root = repoRootOf(s.pinned.cwd)
+    if (root) roots.set(root, repoForCwd(s.pinned.cwd)?.path || basename(root))
+  }
+  for (const sc of readSchedules(Date.now())) {
+    if (sc.repoRoot && !roots.has(sc.repoRoot)) roots.set(sc.repoRoot, sc.repoLabel || basename(sc.repoRoot))
+  }
+  const rows = await Promise.all(
+    [...roots.entries()].map(async ([repoRoot, repo]) => {
+      try {
+        const m = await mrSummary(repoRoot)
+        return { repo, repoRoot, label: m.label, open: m.open, approve: m.approve, changes: m.changes, needsReview: m.needsReview }
+      } catch {
+        return null
+      }
+    }),
+  )
+  return rows.filter((r): r is NonNullable<typeof r> => !!r && r.open > 0)
+})
 ipcMain.handle('dirs:projects', () => {
   const base = resolvedProjectsDir()
   try {

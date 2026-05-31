@@ -489,6 +489,16 @@ export type SessionMeta = {
   mtime: number
 }
 
+/** Cross-repo PR/MR bucket counts for the Triage tab (one row per known repo). */
+export type FleetMrSummary = {
+  repo: string
+  repoRoot: string
+  label: 'PR' | 'MR'
+  open: number
+  approve: number
+  changes: number
+  needsReview: number
+}
 export type FleetSession = {
   key: string
   sessionId: string
@@ -543,6 +553,7 @@ export type GtApi = {
   setActiveSession: (key: string) => Promise<void>
   stopSession: (key: string) => Promise<void>
   fleet: () => Promise<FleetSession[]>
+  fleetMrs: () => Promise<FleetMrSummary[]>
   pickDir: () => Promise<string | null>
   projectDirs: () => Promise<{ name: string; path: string }[]>
   detectEnv: () => Promise<EnvDetect>
