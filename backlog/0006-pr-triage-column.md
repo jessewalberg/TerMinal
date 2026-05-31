@@ -87,3 +87,13 @@ with what's there. ~10 lines.
 - 1 filter token in `/prs` Telegram command
 
 No new IPCs, no new agents, no new storage.
+
+---
+
+### Update — 2026-05-31 (cross-repo Triage tab shipped)
+
+The fit/gaps analysis surfaced a related, broader gap — no fleet-wide
+"which PRs are ready vs need changes across all repos" view — now shipped
+as the **Triage tab** (`fleet:mrs` IPC over `mrSummary()` per known repo).
+This ticket's original scope (a `risk_tier` from /code-review + a per-PR
+risk column) is still open and complementary: add risk to the new tab's rows.

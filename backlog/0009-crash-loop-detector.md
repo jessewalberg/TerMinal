@@ -124,3 +124,17 @@ week (just log to activity, no Telegram).
 - Wedged: medium — heartbeat pattern matching could miss Opus
   thinking long. Mitigated by the conjunction + tunable thresholds +
   dry-run week.
+
+---
+
+### Update — 2026-05-31 (analysis findings)
+
+The wedged-session detector is still **Claude-only** (scans only
+`~/.claude/projects`, never `~/.codex/sessions`), keys on a repeated error
+signature (so confidently-wrong productive loops never trip), and surfaces
+only a HITL/activity row — the specced amber sub-bar dot (Stage 2) was never
+built. 80/20 next steps: (1) also scan `~/.codex/sessions` (biggest blind
+spot; reuse the Codex jsonl parser); (2) cache `WedgedSession[]` + a
+`fleet:wedged` IPC so SessionView/FleetView render an amber in-pane dot.
+Note: the new `awaiting` fleet state (ticket #31) is adjacent but distinct —
+it flags permission-gates/questions, not crash loops.
