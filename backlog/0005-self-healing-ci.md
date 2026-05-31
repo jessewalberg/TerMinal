@@ -1,14 +1,14 @@
 ---
 id: 5
 title: "Self-healing CI: webhook receiver shim + .agents/ci-watchdog.sh"
-status: open
+status: closed
 priority: medium
 horizon: next
 hitl: false
 type: feature
 source: research
 created: 2026-05-30
-updated: 2026-05-30
+updated: 2026-05-31
 prs: []
 refs: []
 depends_on: []
