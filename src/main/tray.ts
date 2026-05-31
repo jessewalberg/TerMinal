@@ -124,7 +124,7 @@ function buildMenu(s: Snapshot): Electron.Menu {
   if (s.spendTodayUsd > 0) {
     template.push({
       label: `${fmtUsd(s.spendTodayUsd)} spent today`,
-      click: () => focusAndNav('observability'),
+      click: () => focusAndNav('factory'),
     })
   }
 
