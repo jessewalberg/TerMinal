@@ -17,6 +17,8 @@ const PATTERNS: { pattern: RegExp; kind: ActivityKind }[] = [
   { pattern: /^(pr|mr)\s+(?:[!#]?\d+\s+)?(opened|created|filed)/i, kind: 'pr-opened' },
   { pattern: /^(pr|mr)\s+(?:[!#]?\d+\s+)?merged/i, kind: 'pr-merged' },
   { pattern: /^(pr|mr|review)\s+(?:[!#]?\d+\s+)?(verdict|reviewed|review)/i, kind: 'pr-verdict' },
+  // Deploy / ship / publish — value lands here for the Workers/Astro/email fleet
+  { pattern: /^(deploy(ed|ment|ing)?|shipped|publish(ed|ing)?|released)\b/i, kind: 'deploy' },
   // Tests
   { pattern: /^tests?\s+(pass(ed|ing)?|green)/i, kind: 'tests-pass' },
   { pattern: /^tests?\s+(fail(ed|ing)?|red)/i, kind: 'tests-fail' },
@@ -57,6 +59,7 @@ export function resolveActivityKind(passed: string | undefined, title: string): 
     'pr-opened',
     'pr-verdict',
     'pr-merged',
+    'deploy',
     'tests-pass',
     'tests-fail',
     'check',

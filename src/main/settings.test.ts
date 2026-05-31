@@ -91,6 +91,16 @@ describe('engine parity (cursor)', () => {
   })
 })
 
+describe('cloudflare creds', () => {
+  test('round-trip apiToken + accountId', () => {
+    const s = migrate({ cloudflare: { apiToken: 'cf-tok', accountId: 'acc-123' } })
+    expect(s.cloudflare).toEqual({ apiToken: 'cf-tok', accountId: 'acc-123' })
+  })
+  test('default is empty (poller off)', () => {
+    expect(defaultSettings().cloudflare).toEqual({ apiToken: '', accountId: '' })
+  })
+})
+
 describe('worktreesFrom', () => {
   test('explicit value wins', () => {
     expect(worktreesFrom('/custom/wt', '/projects')).toBe('/custom/wt')

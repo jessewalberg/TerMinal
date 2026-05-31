@@ -38,6 +38,7 @@ export type ActivityKind =
   | 'pr-opened'
   | 'pr-verdict'
   | 'pr-merged'
+  | 'deploy'
   | 'tests-pass'
   | 'tests-fail'
   | 'check'
@@ -140,6 +141,7 @@ export type ForgePref = 'auto' | 'github' | 'gitlab'
 export type TelegramCfg = { notify: boolean; control: boolean; botToken: string; chatId: string }
 export type AppsCfg = { editor: string; browser: string }
 export type OpenRouterCfg = { apiKey: string; defaultModel: string }
+export type CloudflareCfg = { apiToken: string; accountId: string }
 export type Settings = {
   onboarded: boolean
   projectsDir: string
@@ -150,14 +152,18 @@ export type Settings = {
   telegram: TelegramCfg
   apps: AppsCfg
   openrouter: OpenRouterCfg
+  cloudflare: CloudflareCfg
   harnessDir: string
   templateRepo: string
 }
-export type SettingsPatch = Partial<Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter'>> & {
+export type SettingsPatch = Partial<
+  Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter' | 'cloudflare'>
+> & {
   telegram?: Partial<TelegramCfg>
   engines?: Partial<Record<Engine, Partial<EngineCfg>>>
   apps?: Partial<AppsCfg>
   openrouter?: Partial<OpenRouterCfg>
+  cloudflare?: Partial<CloudflareCfg>
 }
 
 /** Tool/engine readiness probed by the main process (env:detect). */

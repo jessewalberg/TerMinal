@@ -59,6 +59,7 @@ const ACTIVITY_TONES: Record<string, BadgeTone> = {
   'task-complete': 'green',
   'tests-pass': 'green',
   'pr-merged': 'green',
+  deploy: 'green',
   'ticket-closed': 'green',
   'ticket-filed': 'accent',
   'pr-verdict': 'blue',

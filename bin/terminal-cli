@@ -71,6 +71,7 @@ const KIND_PATTERNS = [
   [/^(pr|mr)\s+(?:[!#]?\d+\s+)?(opened|created|filed)/i, 'pr-opened'],
   [/^(pr|mr)\s+(?:[!#]?\d+\s+)?merged/i, 'pr-merged'],
   [/^(pr|mr|review)\s+(?:[!#]?\d+\s+)?(verdict|reviewed|review)/i, 'pr-verdict'],
+  [/^(deploy(ed|ment|ing)?|shipped|publish(ed|ing)?|released)\b/i, 'deploy'],
   [/^tests?\s+(pass(ed|ing)?|green)/i, 'tests-pass'],
   [/^tests?\s+(fail(ed|ing)?|red)/i, 'tests-fail'],
   [/^(check|drift|coverage|deps|deps-quality|dead-code|perf|health)\b/i, 'check'],
@@ -497,6 +498,15 @@ switch (cmd) {
   case 'activity':
     emitActivity(args[0], args[1], args[2])
     break
+  case 'deploy': {
+    // terminal-cli deploy "<env>" "[sha]" — record a ship event (e.g. after
+    // `wrangler deploy` in a per-repo /deploy skill). The lifecycle stage the
+    // factory model gains beyond pr-merged.
+    const env = args[0] || 'prod'
+    const sha = args[1] || ''
+    emitActivity('deploy', `Deployed · ${env}`, sha)
+    break
+  }
   case 'notify':
     pingTelegram(args[0] || '')
     break
@@ -511,10 +521,11 @@ switch (cmd) {
     break
   default:
     console.error(
-      'usage: terminal-cli <ticket|hitl|activity|notify|state|mcp|classify> [args...]\n' +
+      'usage: terminal-cli <ticket|hitl|activity|deploy|notify|state|mcp|classify> [args...]\n' +
         '  ticket "<title>" "<body>"                file a backlog ticket on TERMINAL_REPO\n' +
         '  hitl "<title>" "<action>"                file a global HITL item + Telegram ping\n' +
         '  activity <kind> "<title>" "<detail>"     emit one activity-feed event\n' +
+        '  deploy "<env>" "[sha]"                   record a deploy/ship event (kind:deploy)\n' +
         '  notify "<message>"                       send a Telegram message (raw)\n' +
         '  state [get [key] | get-sha | set <k> <v> | set-sha <sha> | mark-main]\n' +
         '                                           persist per-(repo, agent) JSON sidecar\n',

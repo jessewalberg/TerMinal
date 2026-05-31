@@ -87,6 +87,7 @@ export type ActivityKind =
   | 'pr-opened'
   | 'pr-verdict'
   | 'pr-merged'
+  | 'deploy'
   | 'tests-pass'
   | 'tests-fail'
   | 'check'
@@ -129,6 +130,7 @@ const NOTIFY: Record<ActivityKind, boolean> = {
   'pr-opened': false,
   'pr-verdict': true,
   'pr-merged': true,
+  deploy: false, // ship events are feed context; per-repo /deploy skills opt in to pinging if they want
   'tests-pass': false,
   'tests-fail': true,
   check: false,
