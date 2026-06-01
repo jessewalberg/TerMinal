@@ -24,6 +24,7 @@ import { fileHitl } from './hitl'
 import { composeSteps, pipelineLabel, type Step } from './pipelines'
 import { buildEngineCmd } from './engine-cmd'
 import { createCursorStreamDecoder } from './cursor-stream'
+import { createClaudeStreamDecoder } from './claude-stream'
 import { formatAgentRunCompletion, readRunLogFile } from './agent-run-log'
 
 export { listPipelines, type PipelineId } from './pipelines'
@@ -908,11 +909,18 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     procs.set(run.id, p)
-    // cursor runs emit NDJSON (--output-format stream-json); decode it back to
-    // plain text + progress breadcrumbs, one decoder per spawned process. A new
-    // step = a new cursor process = a fresh stream, so the decoder is per-step.
-    // claude/codex/scripts already stream human-readable text through the PTY.
-    const decode = spec.engine === 'cursor' ? createCursorStreamDecoder() : null
+    // cursor + prompt-style claude emit NDJSON (--output-format stream-json);
+    // decode it back to plain text + progress breadcrumbs, one decoder per
+    // spawned process. A new step = a new process = a fresh stream, so the
+    // decoder is per-step. Script-first agents (scriptPath) emit their own
+    // plain text — never decode those, or non-JSON lines would be swallowed.
+    // codex streams human-readable text through the PTY and needs no decoder.
+    const decode =
+      spec.engine === 'cursor'
+        ? createCursorStreamDecoder()
+        : spec.engine === 'claude' && !scriptPath
+          ? createClaudeStreamDecoder()
+          : null
     p.stdout?.on('data', (d: Buffer) => {
       const text = decode ? decode(d.toString()) : d.toString()
       if (text) append(text)

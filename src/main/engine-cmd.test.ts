@@ -4,9 +4,14 @@ import { buildEngineCmd } from './engine-cmd'
 // The resolved binary is injected so these assertions don't depend on the
 // machine's settings.json (enginePath is the impure caller's concern).
 describe('buildEngineCmd', () => {
-  test('claude → headless -p with skip-permissions', () => {
+  test('claude → headless -p with skip-permissions, NDJSON stream', () => {
+    // `claude -p` defaults to --output-format text, which BUFFERS the whole turn
+    // and prints it only on completion — a live run shows nothing but the header
+    // for minutes (looks hung/wedged). stream-json + --include-partial-messages
+    // makes it emit incremental text deltas the runtime decodes for live logs.
+    // See claude-stream.ts.
     expect(buildEngineCmd('claude', 'claude', '/wt', 'do thing')).toBe(
-      `claude -p 'do thing' --dangerously-skip-permissions`,
+      `claude -p 'do thing' --dangerously-skip-permissions --output-format stream-json --verbose --include-partial-messages`,
     )
   })
 
@@ -31,7 +36,7 @@ describe('buildEngineCmd', () => {
       `cursor-agent -p x --force --workspace /wt --model composer-2.5 --output-format stream-json --stream-partial-output`,
     )
     expect(buildEngineCmd('claude', 'claude', '/wt', 'x', 'opus')).toBe(
-      `claude -p x --dangerously-skip-permissions --model opus`,
+      `claude -p x --dangerously-skip-permissions --model opus --output-format stream-json --verbose --include-partial-messages`,
     )
     expect(buildEngineCmd('codex', 'codex', '/wt', 'x', 'gpt-5')).toBe(
       `codex exec -s danger-full-access -C /wt --model gpt-5 x`,

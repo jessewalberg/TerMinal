@@ -20,13 +20,19 @@ export function buildEngineCmd(
 ): string {
   const modelFlag = model ? ` --model ${shq(model)}` : ''
   if (engine === 'claude') {
-    return `${shq(bin)} -p ${shq(prompt)} --dangerously-skip-permissions${modelFlag}`
+    // stream-json + --include-partial-messages: claude's default --output-format
+    // text BUFFERS the whole turn and prints it only on completion, so a live
+    // run shows nothing but the header for minutes (looks hung). The NDJSON text
+    // deltas are decoded back to plain text by createClaudeStreamDecoder() in
+    // the runtime (see claude-stream.ts). --verbose is required for stream-json.
+    return `${shq(bin)} -p ${shq(prompt)} --dangerously-skip-permissions${modelFlag} --output-format stream-json --verbose --include-partial-messages`
   }
   if (engine === 'cursor') {
     // stream-json + --stream-partial-output: cursor's default `text` format
     // buffers the whole turn and prints it only on completion, so a live run
-    // shows nothing for minutes (looks hung) — unlike claude/codex which stream
-    // through the script(1) PTY. NDJSON deltas are decoded back to plain text by
+    // shows nothing for minutes (looks hung) — same as claude (also stream-json;
+    // codex is the only engine that streams plain text through the script(1)
+    // PTY). NDJSON deltas are decoded back to plain text by
     // createCursorStreamDecoder() in the runtime (see cursor-stream.ts).
     return `${shq(bin)} -p ${shq(prompt)} --force --workspace ${shq(worktree)}${modelFlag} --output-format stream-json --stream-partial-output`
   }
