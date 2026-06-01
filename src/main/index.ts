@@ -1,62 +1,23 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, clipboard, Tray, Menu, nativeImage, safeStorage } from 'electron'
 import { join, basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { statSync, existsSync, readdirSync, readFileSync, writeFileSync, openSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { spawn as cpSpawn, execFileSync } from 'node:child_process'
+import { statSync, existsSync, readdirSync, readFileSync, writeFileSync, openSync, mkdirSync } from 'node:fs'
+import { spawn as cpSpawn } from 'node:child_process'
 import * as pty from 'node-pty'
 
 // The main bundle is ESM (package.json "type": "module"), so __dirname doesn't
 // exist — derive the module dir the ESM-canonical way or the window never opens.
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 
-function sourceCheckoutRoot(marker: string): string {
-  const candidates = [
+function checkoutRoots(): string[] {
+  return [
     process.env.GT_TERMINAL_REPO || '',
     process.cwd(),
     app.getAppPath(),
     join(moduleDir, '..', '..'),
   ].filter(Boolean)
-  for (const c of candidates) {
-    if (existsSync(join(c, marker))) return c
-  }
-  return ''
-}
-
-// Ordered template dirs to probe for bootstrap.sh. A configured *local path*
-// points straight at the template dir; the source-checkout roots need the
-// templates/project-template suffix appended. The packaged app matches none of
-// these (templates/ isn't bundled) and falls back to a clone — see
-// workspace:bootstrap.
-function templateDirCandidates(): string[] {
-  const configured = resolvedTemplateRepo()
-  const dirs: string[] = []
-  if (configured && !isTemplateUrl(configured)) dirs.push(configured)
-  const roots = [
-    process.env.GT_TERMINAL_REPO || '',
-    process.cwd(),
-    app.getAppPath(),
-    join(moduleDir, '..', '..'),
-  ].filter(Boolean)
-  for (const r of roots) dirs.push(join(r, 'templates', 'project-template'))
-  return dirs
-}
-
-// Shallow-clone the template repo into a temp dir; null when the clone yields no
-// usable checkout (offline, unreachable repo, or no bootstrap.sh). Caller owns cleanup.
-function cloneTemplateToTmp(repo: string): TemplateSource | null {
-  try {
-    const dir = mkdtempSync(join(tmpdir(), 'gt-bootstrap-'))
-    execFileSync('git', ['clone', '--depth', '1', repo, dir], { stdio: 'ignore', timeout: 60_000 })
-    if (!existsSync(join(dir, 'bootstrap.sh'))) {
-      rmSync(dir, { recursive: true, force: true })
-      return null
-    }
-    return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
-  } catch {
-    return null
-  }
 }
 import {
   readTranscriptStats,
@@ -86,7 +47,12 @@ import {
   setAllDisabled as setAllSchedulesDisabled,
 } from './agents-disabled'
 import { scaffoldProject } from './scaffold'
-import { pickTemplateSource, isTemplateUrl, type TemplateSource } from './template'
+import {
+  pickTemplateSource,
+  sourceCheckoutRoot,
+  templateDirCandidates,
+  cloneTemplateToTmp,
+} from './template'
 import {
   readSettings,
   patchSettings,
@@ -1006,10 +972,11 @@ ipcMain.handle('workspace:bootstrap', async (_e, repoRoot: string) => {
   // Prefer a local checkout; the packaged app has none, so fall back to cloning
   // the configured template repo to a temp dir (cleaned up in finally).
   const src = pickTemplateSource({
-    candidates: templateDirCandidates(),
-    hasBootstrap: (d) => existsSync(join(d, 'bootstrap.sh')),
+    candidates: templateDirCandidates(resolvedTemplateRepo(), checkoutRoots()),
+    marker: 'bootstrap.sh',
     templateRepo: resolvedTemplateRepo(),
-    cloneToTmp: cloneTemplateToTmp,
+    cloneToTmp: (repo) =>
+      cloneTemplateToTmp(repo, { tmpPrefix: 'gt-bootstrap-', marker: 'bootstrap.sh' }),
   })
   if ('error' in src) return { error: src.error }
   const script = join(src.dir, 'bootstrap.sh')
@@ -1056,7 +1023,7 @@ ipcMain.handle('release:start', () => {
   // We probe a few candidates: GT_REPO env var (dev override) → process.cwd()
   // → __dirname climb-up. This is enough for the dev / source-installed
   // workflow TerMinal actually runs in.
-  const repoRoot = sourceCheckoutRoot(join('bin', 'release'))
+  const repoRoot = sourceCheckoutRoot(checkoutRoots(), join('bin', 'release'))
   if (!repoRoot) {
     return {
       error:

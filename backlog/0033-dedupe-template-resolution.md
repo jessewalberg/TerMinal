@@ -1,15 +1,15 @@
 ---
 id: 33
 title: "Dedupe template resolution: unify scaffold / bootstrap / telegram onto template.ts"
-status: open
+status: closed
 priority: low
 horizon: next
 hitl: false
 type: refactor
 source: analysis
 created: 2026-05-31
-updated: 2026-05-31
-prs: []
+updated: 2026-06-01
+prs: [https://github.com/jessewalberg/TerMinal/pull/4]
 refs: [ADR-0004]
 depends_on: []
 ---
