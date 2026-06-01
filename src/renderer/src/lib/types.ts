@@ -658,6 +658,7 @@ export type GtApi = {
     runs: () => Promise<AgentRun[]>
     cancel: (runId: string) => Promise<boolean>
     removeWorktree: (runId: string) => Promise<boolean>
+    rerun: (run: UnifiedRun) => Promise<{ ok: true; runId?: string } | { error: string }>
     onStatus: (cb: (run: AgentRun) => void) => () => void
     onOutput: (cb: (p: { runId: string; chunk: string }) => void) => () => void
   }

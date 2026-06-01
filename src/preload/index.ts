@@ -83,6 +83,7 @@ const gt = {
     runs: () => ipcRenderer.invoke('agents:runs'),
     cancel: (runId: string) => ipcRenderer.invoke('agents:cancel', runId),
     removeWorktree: (runId: string) => ipcRenderer.invoke('agents:remove-worktree', runId),
+    rerun: (run: unknown) => ipcRenderer.invoke('runs:rerun', run),
     onStatus: (cb: (run: unknown) => void) => {
       const h = (_e: unknown, run: unknown) => cb(run)
       ipcRenderer.on('agent:status', h)

@@ -51,6 +51,7 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
   const [log, setLog] = useState<{ runId: string; text: string } | null>(null)
   const [logQuery, setLogQuery] = useState('')
   const [rerunBusy, setRerunBusy] = useState(false)
+  const [rerunError, setRerunError] = useState<string | null>(null)
   const logRef = useRef<HTMLPreElement>(null)
 
   const reload = () => window.gt.agents.allRuns().then(setRuns)
@@ -161,14 +162,16 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
   // via agents.run with the same engine/model snapshot.
   const handleRerun = async (run: UnifiedRun) => {
     setRerunBusy(true)
+    setRerunError(null)
     try {
-      if (run.source === 'cron' && run.scheduleId) {
-        await window.gt.schedules.runNow(run.scheduleId)
-      } else {
-        const eng = run.engine === 'codex' || run.engine === 'claude' ? run.engine : undefined
-        await window.gt.agents.run(run.agentId, eng, undefined, undefined, undefined)
+      const res = await window.gt.agents.rerun(run)
+      if ('error' in res) {
+        setRerunError(res.error)
+        return
       }
       await reload()
+    } catch (err) {
+      setRerunError(err instanceof Error ? err.message : String(err))
     } finally {
       setRerunBusy(false)
     }
@@ -424,6 +427,11 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
                 <Play size={10} strokeWidth={2} />
                 {rerunBusy ? 'starting…' : 'Re-run'}
               </button>
+              {rerunError && (
+                <span className="text-[10.5px] text-[var(--gt-red)]" title={rerunError}>
+                  {rerunError}
+                </span>
+              )}
               <button
                 onClick={() => setSel(null)}
                 title="Close detail"

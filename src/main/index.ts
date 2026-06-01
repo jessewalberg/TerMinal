@@ -150,6 +150,8 @@ import {
   removeAllJobs,
   runScheduleNow,
 } from './launchd'
+import { rerunRun } from './rerun'
+import type { UnifiedRun } from './cron-runs'
 import { registerMcpEverywhere } from './mcp-register'
 import { readCronRuns, readCronRunLog, listAllRuns, sweepStaleCronRuns } from './cron-runs'
 import { summaryFor, agentROI, dailySpend, listAIRuns, type Range } from './ai-runs'
@@ -763,6 +765,13 @@ ipcMain.handle('schedules:run-now', (_e, id: string) => {
 })
 ipcMain.handle('schedules:runs', (_e, id?: string) => readCronRuns(id))
 ipcMain.handle('runs:all', () => listAllRuns())
+ipcMain.handle('runs:rerun', (_e, run: UnifiedRun) =>
+  rerunRun(run, {
+    scheduleExists: (id) => !!getSchedule(id),
+    runSchedule: runScheduleNow,
+    runAgent,
+  }),
+)
 ipcMain.handle('runs:log', (_e, source: 'cron' | 'agent', runId: string) => {
   if (source === 'cron') return readCronRunLog(runId)
   // In-process agent run output lives in memory via listRuns(); look it up by id.
