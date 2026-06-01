@@ -27,6 +27,8 @@ state.
   `terminal-cli state`.
 - **Process model:** standalone Bun server; TerMinal main spawns it on launch
   when config exists (`ci-webhook-launcher.ts`). Curl-testable without Electron.
+- **Packaging:** `dashboard/src/` ships via `electron-builder` `extraResources`;
+  Bun resolves `hono` from the app bundle root (`app.getAppPath()` as cwd).
 
 ## [3] Consequences
 

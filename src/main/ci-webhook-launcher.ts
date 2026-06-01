@@ -2,6 +2,7 @@
 // The server is a standalone Bun process (dashboard/src/server.ts) — no Electron
 // imports in the hot path — so curl/webhook tests work without the app bundle.
 
+import { app } from 'electron'
 import { spawn as cpSpawn } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -26,11 +27,20 @@ function harnessConfigExists(): boolean {
 let dashboardProc: ReturnType<typeof cpSpawn> | null = null
 
 function dashboardServerPath(): string {
-  const packaged = join(process.resourcesPath || '', 'dashboard-server.ts')
+  const packaged = join(process.resourcesPath || '', 'dashboard', 'src', 'server.ts')
   if (process.resourcesPath && existsSync(packaged)) return packaged
   const dev = join(moduleDir, '../../dashboard/src/server.ts')
   if (existsSync(dev)) return dev
   return ''
+}
+
+/** App root where node_modules/hono lives — Bun resolves deps from cwd. */
+function moduleResolveRoot(): string {
+  try {
+    return app.getAppPath()
+  } catch {
+    return join(moduleDir, '../..')
+  }
 }
 
 /** Start :4848 webhook receiver when prs/config.yml exists. Idempotent. */
@@ -43,6 +53,7 @@ export function startCiWebhookDashboard(): { started: boolean; reason?: string }
 
   const bun = process.env.BUN_BIN || 'bun'
   dashboardProc = cpSpawn(bun, [serverTs], {
+    cwd: moduleResolveRoot(),
     detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env },

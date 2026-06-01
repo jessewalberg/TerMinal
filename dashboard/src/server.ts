@@ -51,13 +51,16 @@ export function createApp() {
 
     if (shouldSpawnWatchdog(payload)) {
       const ci = extractCiEnv(payload)
-      const spawned = spawnCiWatchdog({
-        repoRoot: entry.root,
-        pipelineId: ci.pipelineId,
-        mrIid: ci.mrIid,
-        branch: ci.branch,
-      })
-      if (!spawned.ok) return c.json({ ok: false, error: spawned.error }, 500)
+      // Ack the webhook even when pipeline id is missing — avoids retry storms.
+      if (ci.pipelineId) {
+        const spawned = spawnCiWatchdog({
+          repoRoot: entry.root,
+          pipelineId: ci.pipelineId,
+          mrIid: ci.mrIid,
+          branch: ci.branch,
+        })
+        if (!spawned.ok) return c.json({ ok: false, error: spawned.error }, 500)
+      }
     }
 
     return c.json({ ok: true })

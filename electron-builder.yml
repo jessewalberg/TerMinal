@@ -16,6 +16,9 @@ extraResources:
     to: terminal-cli
   - from: bin/terminal-mcp-server
     to: terminal-mcp-server
+  # CI webhook shim (#0005) — standalone Bun entry; hono resolves from app node_modules.
+  - from: dashboard/src
+    to: dashboard/src
 # node-pty ships a native .node binary that can't live inside the asar archive.
 asarUnpack:
   - '**/node_modules/node-pty/**'

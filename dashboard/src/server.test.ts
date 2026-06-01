@@ -109,6 +109,54 @@ describe('POST /api/ci-webhook/:repo', () => {
     expect(res.status).toBe(404)
   })
 
+  test('rejects configured repo when root path is missing', async () => {
+    writeFileSync(
+      join(harnessDir, 'prs', 'config.yml'),
+      `repos:
+  ghost:
+    root: ${join(tmpdir(), 'gt-missing-root-never-exists')}
+    ci_webhook_secret: wh-secret
+`,
+    )
+    const app = createApp()
+    const res = await app.request('/api/ci-webhook/ghost', {
+      method: 'POST',
+      headers: { 'X-Gitlab-Token': 'wh-secret' },
+      body: JSON.stringify({ object_kind: 'pipeline', object_attributes: { id: 1, status: 'failed' } }),
+    })
+    expect(res.status).toBe(404)
+    expect((await res.json()).error).toBe('repo root missing')
+  })
+
+  test('acknowledges failed pipeline without id without spawning', async () => {
+    const spawnSpy = spyOn(spawnWatchdog, 'spawnCiWatchdog')
+    const app = createApp()
+    const res = await app.request('/api/ci-webhook/testrepo', {
+      method: 'POST',
+      headers: { 'X-Gitlab-Token': 'wh-secret' },
+      body: JSON.stringify({ object_kind: 'pipeline', object_attributes: { status: 'failed' } }),
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(spawnSpy).not.toHaveBeenCalled()
+  })
+
+  test('returns 500 when spawn fails', async () => {
+    spyOn(spawnWatchdog, 'spawnCiWatchdog').mockReturnValue({ ok: false, error: 'spawn failed' })
+    const app = createApp()
+    const body = JSON.stringify({
+      object_kind: 'pipeline',
+      object_attributes: { id: 1, status: 'failed' },
+    })
+    const res = await app.request('/api/ci-webhook/testrepo', {
+      method: 'POST',
+      headers: { 'X-Gitlab-Token': 'wh-secret' },
+      body,
+    })
+    expect(res.status).toBe(500)
+    expect((await res.json()).error).toBe('spawn failed')
+  })
+
   test('passes CI env vars to spawn', async () => {
     let captured: spawnWatchdog.WatchdogEnv | undefined
     spyOn(spawnWatchdog, 'spawnCiWatchdog').mockImplementation((env) => {
