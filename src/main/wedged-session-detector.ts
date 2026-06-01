@@ -15,7 +15,10 @@ import { createHash } from 'node:crypto'
 import { fileHitl } from './hitl'
 import { emitActivity } from './events'
 
-const CLAUDE_PROJECTS = join(homedir(), '.claude', 'projects')
+function claudeProjectsDir(): string {
+  const override = process.env.TERMINAL_CLAUDE_PROJECTS?.trim()
+  return override || join(homedir(), '.claude', 'projects')
+}
 const MARKER_FILE = join(homedir(), '.config', 'TerMinal', 'wedged-sessions.json')
 const FRESHNESS_MS = 30 * 60_000
 const TAIL_TURNS = 60
@@ -203,17 +206,18 @@ function sessionCwd(file: string): string {
 }
 
 export function detectWedgedSessions(): WedgedSession[] {
-  if (!existsSync(CLAUDE_PROJECTS)) return []
+  const projectsDir = claudeProjectsDir()
+  if (!existsSync(projectsDir)) return []
   const cutoff = Date.now() - FRESHNESS_MS
   const wedged: WedgedSession[] = []
   let projectDirs: string[] = []
   try {
-    projectDirs = readdirSync(CLAUDE_PROJECTS)
+    projectDirs = readdirSync(projectsDir)
   } catch {
     return []
   }
   for (const dir of projectDirs) {
-    const p = join(CLAUDE_PROJECTS, dir)
+    const p = join(projectsDir, dir)
     let files: string[] = []
     try {
       files = readdirSync(p)

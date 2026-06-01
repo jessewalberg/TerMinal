@@ -36,4 +36,10 @@ overall: 90
     writeFileSync(join(dir, 'def5678.md'), `---\nverdict: blocked\nrisk_tier: medium\n---\n`)
     expect(reviewForPrDir(dir)?.riskTier).toBe('medium')
   })
+
+  test('maps unknown risk_tier values to unscored', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gt-review-'))
+    writeFileSync(join(dir, 'abc9999.md'), `---\nverdict: approve\nrisk_tier: critical\n---\n`)
+    expect(reviewForPrDir(dir)?.riskTier).toBe('unscored')
+  })
 })

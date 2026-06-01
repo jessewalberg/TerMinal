@@ -114,16 +114,27 @@ export async function mrSummary(repoRoot: string): Promise<MrSummary> {
   const changes = opened.filter(
     (m) => m.review?.verdict === 'request-changes' || m.review?.verdict === 'blocked',
   ).length
-  const tier = (m: (typeof opened)[0]) => m.review?.riskTier || 'unscored'
+  const risk = openMrRiskCounts(opened)
   return {
     open: opened.length,
     approve,
     changes,
     needsReview: opened.length - approve - changes,
+    ...risk,
+    label: forge.forgeFor(repoRoot).label,
+  }
+}
+
+/** Open-MR risk bucket counts for fleet triage (test seam). */
+export function openMrRiskCounts(opened: Array<{ review: Review | null }>): Pick<
+  MrSummary,
+  'riskHigh' | 'riskMedium' | 'riskUnscored'
+> {
+  const tier = (m: (typeof opened)[0]) => m.review?.riskTier || 'unscored'
+  return {
     riskHigh: opened.filter((m) => tier(m) === 'high').length,
     riskMedium: opened.filter((m) => tier(m) === 'medium').length,
     riskUnscored: opened.filter((m) => tier(m) === 'unscored').length,
-    label: forge.forgeFor(repoRoot).label,
   }
 }
 

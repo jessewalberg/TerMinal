@@ -199,6 +199,8 @@ function GroupedMrList({
         </span>
       </div>
     )
+  if (mrs.length === 0)
+    return <div className="p-6 text-[12px] text-zinc-600">No {label}s for this repo.</div>
   const visible = mrs.filter((m) => matchesRiskFilter(m.review?.riskTier, riskFilter))
   if (visible.length === 0)
     return (

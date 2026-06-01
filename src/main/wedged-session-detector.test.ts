@@ -1,21 +1,24 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const claudeProjects = join(homedir(), '.claude', 'projects')
+const claudeProjects = mkdtempSync(join(tmpdir(), 'gt-claude-projects-'))
 const testDirs: string[] = []
+let detectWedgedSessions: typeof import('./wedged-session-detector').detectWedgedSessions
 
-mock.module('electron', () => ({
-  Notification: class {
-    static isSupported() {
-      return false
-    }
-    show() {}
-  },
-}))
-
-const { detectWedgedSessions } = await import('./wedged-session-detector')
+beforeAll(async () => {
+  process.env.TERMINAL_CLAUDE_PROJECTS = claudeProjects
+  mock.module('electron', () => ({
+    Notification: class {
+      static isSupported() {
+        return false
+      }
+      show() {}
+    },
+  }))
+  ;({ detectWedgedSessions } = await import('./wedged-session-detector'))
+})
 
 afterEach(() => {
   for (const dir of testDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
