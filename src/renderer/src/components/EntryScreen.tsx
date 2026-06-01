@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { X, FolderOpen, Plus, GitBranch, FolderGit2, SquareTerminal } from 'lucide-react'
 import type { SessionEngine, SessionMeta } from '../lib/types'
 import { EngineLogo } from './EngineLogo'
+import { pickDefaultEngine, underDir } from '../lib/pickDefaultEngine'
 import logo from '../assets/logo.png'
 
 export type Choice = { mode: 'new' | 'resume'; engine: SessionEngine; sessionId?: string; cwd?: string; name?: string }
@@ -14,8 +15,6 @@ function rel(ms: number): string {
   return `${Math.floor(s / 86400)}d ago`
 }
 const tilde = (p: string) => p.replace(/^\/Users\/[^/]+/, '~')
-const underDir = (sessionCwd: string, dir: string) =>
-  sessionCwd === dir || sessionCwd.startsWith(dir.replace(/\/$/, '') + '/')
 
 export function EntryScreen({
   onChoose,
@@ -61,6 +60,10 @@ export function EntryScreen({
     window.gt.listSessions().then((s) => {
       setSessions(s)
       if (s[0]?.cwd) setCwd(s[0].cwd)
+      // Default the engine selector to a data-driven choice so the Resume list
+      // isn't empty on open: `local` sessions are never resumable, so picking
+      // them showed 0 entries even with hundreds of claude/codex sessions.
+      setEngine(pickDefaultEngine(s, lockedCwd || undefined))
     })
     window.gt.settings.get().then((s) => {
       setDefaultParent(s.projectsDir)
