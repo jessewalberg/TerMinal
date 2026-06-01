@@ -6,6 +6,7 @@ import { EngineLogo } from '../../components/EngineLogo'
 import { onNavigate } from '../../lib/nav'
 import type { Tab, TabContext, UnifiedRun } from '../../lib/types'
 import { sanitizeLog as stripAnsi } from '../../lib/sanitizeLog'
+import { findRerunTarget, rerunSuccessMessage, type RerunResult } from './rerunState'
 
 // One global view across every run TerMinal has fired — cron (launchd, via
 // bin/terminal-cron) AND in-process (Run button on Agents/Tickets/PRs). The
@@ -52,9 +53,15 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
   const [logQuery, setLogQuery] = useState('')
   const [rerunBusy, setRerunBusy] = useState(false)
   const [rerunError, setRerunError] = useState<string | null>(null)
+  const [rerunNotice, setRerunNotice] = useState<string | null>(null)
   const logRef = useRef<HTMLPreElement>(null)
+  const rerunPollRef = useRef(0)
 
-  const reload = () => window.gt.agents.allRuns().then(setRuns)
+  const reload = async () => {
+    const nextRuns = await window.gt.agents.allRuns()
+    setRuns(nextRuns)
+    return nextRuns
+  }
   // Cost per runId from the AI ledger — joined into each row so the operator
   // sees "this run cost $X" without flipping tabs.
   const [costByRunId, setCostByRunId] = useState<Map<string, number>>(new Map())
@@ -157,23 +164,51 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
     }
   }, [selectedRun?.id, selectedRun?.status])
 
-  // Re-run: cron runs route to schedules.runNow (re-fires the launchd schedule
-  // so the run gets all the same env vars + log path); in-process runs re-fire
-  // via agents.run with the same engine/model snapshot.
+  // Re-run dispatch lives behind runs:rerun so main can route against the run's
+  // own repo. When launchd starts a schedule asynchronously, poll briefly for
+  // the new cron-run record so the detail pane visibly moves to it.
   const handleRerun = async (run: UnifiedRun) => {
+    const requestedAt = Date.now()
+    const pollId = ++rerunPollRef.current
     setRerunBusy(true)
     setRerunError(null)
+    setRerunNotice(null)
     try {
       const res = await window.gt.agents.rerun(run)
       if ('error' in res) {
         setRerunError(res.error)
         return
       }
-      await reload()
+      setRerunNotice(rerunSuccessMessage(res))
+      const nextRuns = await reload()
+      const target = findRerunTarget(run, res, nextRuns, requestedAt)
+      if (target) {
+        setSel(target)
+        return
+      }
+      if (!res.runId) void pollForDetachedRerun(run, res, requestedAt, pollId)
     } catch (err) {
       setRerunError(err instanceof Error ? err.message : String(err))
     } finally {
       setRerunBusy(false)
+    }
+  }
+
+  const pollForDetachedRerun = async (
+    run: UnifiedRun,
+    res: RerunResult,
+    requestedAt: number,
+    pollId: number,
+  ) => {
+    for (let i = 0; i < 8; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      if (rerunPollRef.current !== pollId) return
+      const nextRuns = await reload()
+      const target = findRerunTarget(run, res, nextRuns, requestedAt)
+      if (target) {
+        setSel(target)
+        return
+      }
     }
   }
 
@@ -418,8 +453,8 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
                 title={
                   selectedRun.status === 'running'
                     ? 'Already running'
-                    : selectedRun.source === 'cron' && !selectedRun.scheduleId
-                      ? 'Cron run without scheduleId — cannot re-fire'
+                    : selectedRun.source === 'cron' && selectedRun.scheduleId
+                      ? 'Re-run this schedule'
                       : 'Re-run this agent'
                 }
                 className="inline-flex items-center gap-1 rounded-md border border-[var(--gt-accent)]/40 bg-[var(--gt-accent)]/15 px-1.5 py-0.5 text-[10.5px] text-zinc-100 hover:border-[var(--gt-accent)]/60 disabled:cursor-not-allowed disabled:opacity-40"
@@ -430,6 +465,11 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
               {rerunError && (
                 <span className="text-[10.5px] text-[var(--gt-red)]" title={rerunError}>
                   {rerunError}
+                </span>
+              )}
+              {!rerunError && rerunNotice && (
+                <span className="text-[10.5px] text-[var(--gt-accent-light)]" title={rerunNotice}>
+                  {rerunNotice}
                 </span>
               )}
               <button
