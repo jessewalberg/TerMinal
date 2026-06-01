@@ -42,6 +42,39 @@ function fmtDuration(ms: number): string {
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`
   return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`
 }
+
+// Module-scope so its identity is stable across RunsTab re-renders. Defining it
+// inside the component body gave it a new identity every render, so the 5s
+// cost-refresh remounted the <select> and slammed any open dropdown shut — the
+// "filter closes on me randomly / can't pick all repos" bug. It only reads its
+// props, so hoisting is a pure move.
+function FilterSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  options: string[]
+  placeholder: string
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="rounded-md border border-[var(--gt-border)] bg-black/30 px-1.5 py-0.5 text-[10.5px] text-zinc-300 outline-none"
+    >
+      <option value="">{placeholder}</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
   const [runs, setRuns] = useState<UnifiedRun[] | null>(null)
   const [source, setSource] = useState<'all' | 'cron' | 'agent'>('all')
@@ -270,31 +303,6 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
       failed: runs.filter((r) => r.status === 'failed').length,
     }
   }, [runs])
-
-  const FilterSelect = ({
-    value,
-    onChange,
-    options,
-    placeholder,
-  }: {
-    value: string
-    onChange: (v: string) => void
-    options: string[]
-    placeholder: string
-  }) => (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="rounded-md border border-[var(--gt-border)] bg-black/30 px-1.5 py-0.5 text-[10.5px] text-zinc-300 outline-none"
-    >
-      <option value="">{placeholder}</option>
-      {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
-      ))}
-    </select>
-  )
 
   return (
     <div className="flex h-full min-h-0 bg-[var(--gt-bg)]">
