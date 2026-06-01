@@ -554,7 +554,18 @@ ipcMain.handle('fleet:mrs', async () => {
     [...roots.entries()].map(async ([repoRoot, repo]) => {
       try {
         const m = await mrSummary(repoRoot)
-        return { repo, repoRoot, label: m.label, open: m.open, approve: m.approve, changes: m.changes, needsReview: m.needsReview }
+        return {
+          repo,
+          repoRoot,
+          label: m.label,
+          open: m.open,
+          approve: m.approve,
+          changes: m.changes,
+          needsReview: m.needsReview,
+          riskHigh: m.riskHigh,
+          riskMedium: m.riskMedium,
+          riskUnscored: m.riskUnscored,
+        }
       } catch {
         return null
       }

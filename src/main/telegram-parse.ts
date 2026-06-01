@@ -37,6 +37,28 @@ export function classifyRunArgs(args: string[]): RunArgs {
   return { agentId: args[0] || '', engine, pipeline, repoToken, personaCandidates }
 }
 
+export type MrsFilter = 'all' | 'high' | 'medium' | 'unscored'
+
+export type MrsArgs = {
+  repoToken?: string
+  riskFilter: MrsFilter
+}
+
+/** Classify `/mrs` and `/prs` args: optional @repo plus risk:high|medium or unscored. */
+export function classifyMrsArgs(args: string[]): MrsArgs {
+  let repoToken: string | undefined
+  let riskFilter: MrsFilter = 'all'
+  for (const tok of args) {
+    const t = tok.toLowerCase()
+    if (tok.startsWith('@')) repoToken = tok
+    else if (t === 'risk:high') riskFilter = 'high'
+    else if (t === 'risk:medium') riskFilter = 'medium'
+    else if (t === 'unscored') riskFilter = 'unscored'
+    else if (t === 'all') riskFilter = 'all'
+  }
+  return { repoToken, riskFilter }
+}
+
 /** Parse one `telegram-poll.sh` output line (`<iso>\t<text>`). Returns the
  *  command text iff it's a command newer than `enabledAt` (skip pre-enable
  *  backlog and multi-line continuation lines), else null. */

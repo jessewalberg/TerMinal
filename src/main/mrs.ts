@@ -91,6 +91,9 @@ export type MrSummary = {
   approve: number
   changes: number
   needsReview: number
+  riskHigh: number
+  riskMedium: number
+  riskUnscored: number
   label: string // forge vocabulary for the widget ('PR' | 'MR')
 }
 // Cached (60s) MR counts for the cockpit widget — the forge CLI is slow per poll.
@@ -111,11 +114,15 @@ export async function mrSummary(repoRoot: string): Promise<MrSummary> {
   const changes = opened.filter(
     (m) => m.review?.verdict === 'request-changes' || m.review?.verdict === 'blocked',
   ).length
+  const tier = (m: (typeof opened)[0]) => m.review?.riskTier || 'unscored'
   return {
     open: opened.length,
     approve,
     changes,
     needsReview: opened.length - approve - changes,
+    riskHigh: opened.filter((m) => tier(m) === 'high').length,
+    riskMedium: opened.filter((m) => tier(m) === 'medium').length,
+    riskUnscored: opened.filter((m) => tier(m) === 'unscored').length,
     label: forge.forgeFor(repoRoot).label,
   }
 }

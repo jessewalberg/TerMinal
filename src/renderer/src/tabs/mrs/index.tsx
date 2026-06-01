@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { GitPullRequest, TriangleAlert, GitBranch, ArrowUpRight, ChevronDown, ChevronRight, Sparkles } from 'lucide-react'
 
 // project-template convention: agents tag their docs/ticket/report PRs with
@@ -9,7 +9,8 @@ import { MrDetailView } from '../../components/MrDetail'
 import { PrAgentActions } from '../../components/PrAgentActions'
 import { MrMergeButton } from '../../components/MrMergeButton'
 import { verdictTone, testTone, stateTone } from '../../lib/badges'
-import type { Tab, Mr, TabContext } from '../../lib/types'
+import { RISK_PILL, matchesRiskFilter, riskWeight, type RiskFilter } from '../../lib/risk-tier'
+import type { Tab, Mr, Review, TabContext } from '../../lib/types'
 
 // Three buckets, Tickets-style. Default-collapsed groups match the "closed +
 // icebox collapsed" UX of the Tickets tab. Each group's header reuses
@@ -27,6 +28,24 @@ const GROUPS: {
   { id: 'closed', label: 'closed', toneKey: 'closed', match: (s) => s !== 'opened' && s !== 'merged' },
 ]
 const DEFAULT_COLLAPSED: GroupId[] = ['merged', 'closed']
+
+const RISK_FILTERS: { id: RiskFilter; label: string }[] = [
+  { id: 'all', label: 'all' },
+  { id: 'high', label: 'risk:high' },
+  { id: 'medium', label: 'risk:medium' },
+  { id: 'unscored', label: 'unscored' },
+]
+
+function RiskPill({ tier }: { tier: Review['riskTier'] }) {
+  const t = tier || 'unscored'
+  const pill = RISK_PILL[t]
+  return (
+    <Badge tone={pill.tone}>
+      <span className="mr-0.5">{pill.emoji}</span>
+      {pill.label}
+    </Badge>
+  )
+}
 
 // Tool → display + colored pill
 const AUTHORSHIP_LABEL: Record<string, string> = {
@@ -104,19 +123,7 @@ function MrRow({
             )}
             {m.review && <Badge tone={verdictTone(m.review.verdict)}>{m.review.verdict}</Badge>}
             {m.review && <Badge tone={testTone(m.review.testStatus)}>tests {m.review.testStatus}</Badge>}
-            {m.review?.riskTier && m.review.riskTier !== 'unscored' && (
-              <Badge
-                tone={
-                  m.review.riskTier === 'high'
-                    ? 'red'
-                    : m.review.riskTier === 'medium'
-                      ? 'yellow'
-                      : 'green'
-                }
-              >
-                {m.review.riskTier} risk
-              </Badge>
-            )}
+            <RiskPill tier={m.review?.riskTier || 'unscored'} />
             {m.review?.overall != null && <span className="text-zinc-400">score {m.review.overall}</span>}
             {m.review?.stale && (
               <Badge tone="warn">
@@ -165,6 +172,7 @@ function GroupedMrList({
   sym,
   cli,
   collapsed,
+  riskFilter,
   onToggle,
   onOpen,
   onMerged,
@@ -175,6 +183,7 @@ function GroupedMrList({
   sym: string
   cli: string
   collapsed: Set<GroupId>
+  riskFilter: RiskFilter
   onToggle: (id: GroupId) => void
   onOpen: (iid: number) => void
   onMerged: () => void
@@ -190,20 +199,26 @@ function GroupedMrList({
         </span>
       </div>
     )
-  if (mrs.length === 0)
-    return <div className="p-6 text-[12px] text-zinc-600">No {label}s for this repo.</div>
+  const visible = mrs.filter((m) => matchesRiskFilter(m.review?.riskTier, riskFilter))
+  if (visible.length === 0)
+    return (
+      <div className="p-6 text-[12px] text-zinc-600">
+        No {label}s match <span className="font-mono">{riskFilter === 'all' ? 'all' : riskFilter}</span>.
+      </div>
+    )
 
-  // Sort opened MRs by risk first so high-risk reviews surface up top.
-  // Other groups (closed/merged) keep their original order.
-  const riskWeight = (r?: string) => (r === 'high' ? 0 : r === 'medium' ? 1 : r === 'low' ? 2 : 3)
+  // Opened: high risk first, then newer MRs (higher iid) within the same tier.
+  const sortOpen = (a: Mr, b: Mr) => {
+    const rw = riskWeight(a.review?.riskTier) - riskWeight(b.review?.riskTier)
+    if (rw !== 0) return rw
+    return b.iid - a.iid
+  }
   const groups = GROUPS.map((g) => ({
     ...g,
     items:
       g.id === 'open'
-        ? [...mrs.filter((m) => g.match(m.state))].sort(
-            (a, b) => riskWeight(a.review?.riskTier) - riskWeight(b.review?.riskTier),
-          )
-        : mrs.filter((m) => g.match(m.state)),
+        ? [...visible.filter((m) => g.match(m.state))].sort(sortOpen)
+        : visible.filter((m) => g.match(m.state)),
   })).filter((g) => g.items.length > 0)
 
   return (
@@ -243,13 +258,19 @@ function MrsTab({ ctx }: { ctx: TabContext }) {
   const [error, setError] = useState<string | undefined>(undefined)
   const [selectedMrIid, setSelectedMrIid] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState<Set<GroupId>>(() => new Set(DEFAULT_COLLAPSED))
+  const [riskFilter, setRiskFilter] = useState<RiskFilter>('all')
 
   const hasRemote = !!ctx.repoPath
   const label = ctx.forgeLabel
   const sym = ctx.forgeSym
   const cli = ctx.forgeKind === 'github' ? 'gh' : 'glab'
   const fullName = label === 'PR' ? 'Pull Requests' : 'Merge Requests'
-  const openCount = mrs ? mrs.filter((m) => m.state === 'opened').length : 0
+  const openMrs = useMemo(() => (mrs || []).filter((m) => m.state === 'opened'), [mrs])
+  const openCount = openMrs.length
+  const openFiltered = useMemo(
+    () => openMrs.filter((m) => matchesRiskFilter(m.review?.riskTier, riskFilter)),
+    [openMrs, riskFilter],
+  )
   const toggleGroup = (id: GroupId) =>
     setCollapsed((c) => {
       const n = new Set(c)
@@ -295,10 +316,29 @@ function MrsTab({ ctx }: { ctx: TabContext }) {
         <span className="text-[11px] text-zinc-600">{ctx.repoPath || ctx.repoRoot.replace(/^.*\//, '')}</span>
         {hasRemote && mrs && (
           <span className="ml-auto text-[11px] text-zinc-500">
-            <span className="tabular-nums text-zinc-300">{openCount}</span> open · {mrs.length} total
+            <span className="tabular-nums text-zinc-300">{openFiltered.length}</span>
+            {riskFilter !== 'all' ? ` / ${openCount}` : ''} open · {mrs.length} total
           </span>
         )}
       </div>
+      {hasRemote && mrs && mrs.length > 0 && (
+        <div className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--gt-border)] px-4 py-1.5">
+          {RISK_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setRiskFilter(f.id)}
+              className={`rounded-md px-2 py-0.5 text-[10.5px] ${
+                riskFilter === f.id
+                  ? 'bg-[var(--gt-accent)]/20 text-zinc-100'
+                  : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!hasRemote ? (
           <div className="p-6 text-[12px] leading-relaxed text-zinc-600">
@@ -313,6 +353,7 @@ function MrsTab({ ctx }: { ctx: TabContext }) {
             sym={sym}
             cli={cli}
             collapsed={collapsed}
+            riskFilter={riskFilter}
             onToggle={toggleGroup}
             onOpen={setSelectedMrIid}
             onMerged={refresh}

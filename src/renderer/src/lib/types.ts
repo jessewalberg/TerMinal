@@ -497,6 +497,9 @@ export type FleetMrSummary = {
   approve: number
   changes: number
   needsReview: number
+  riskHigh: number
+  riskMedium: number
+  riskUnscored: number
 }
 export type FleetSession = {
   key: string
@@ -858,6 +861,9 @@ export type MrSummary = {
   approve: number
   changes: number
   needsReview: number
+  riskHigh: number
+  riskMedium: number
+  riskUnscored: number
   label: string
 }
 

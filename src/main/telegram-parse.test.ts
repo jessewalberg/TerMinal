@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import { parseCommand, classifyRunArgs, parsePollLine } from './telegram-parse'
+import { parseCommand, classifyRunArgs, classifyMrsArgs, parsePollLine } from './telegram-parse'
 
 describe('parseCommand', () => {
   test('lowercases the command, preserves arg case', () => {
@@ -41,6 +41,17 @@ describe('classifyRunArgs', () => {
 
   test('unrecognized tokens become persona candidates', () => {
     expect(classifyRunArgs(['docs', 'wizard', 'ninja']).personaCandidates).toEqual(['wizard', 'ninja'])
+  })
+})
+
+describe('classifyMrsArgs', () => {
+  test('parses @repo and risk filters in any order', () => {
+    expect(classifyMrsArgs(['@vellum', 'risk:high'])).toEqual({
+      repoToken: '@vellum',
+      riskFilter: 'high',
+    })
+    expect(classifyMrsArgs(['risk:medium'])).toEqual({ repoToken: undefined, riskFilter: 'medium' })
+    expect(classifyMrsArgs(['unscored', '@foo'])).toEqual({ repoToken: '@foo', riskFilter: 'unscored' })
   })
 })
 

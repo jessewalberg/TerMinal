@@ -8,8 +8,9 @@ import type { Tab, FleetMrSummary } from '../../lib/types'
 // can't give. Backed by fleet:mrs (60s-cached mrSummary per known repo),
 // fetched on demand (the forge CLI is slow to fan out), never polled.
 
-// Most-actionable first: ready-to-merge repos top, then changes-requested.
-const rank = (r: FleetMrSummary) => r.approve * 1000 + r.changes * 10 + r.open
+// Most-actionable first: high-risk open PRs, then ready-to-merge, then changes-requested.
+const rank = (r: FleetMrSummary) =>
+  r.riskHigh * 10_000 + r.approve * 1000 + r.changes * 10 + r.open
 
 function TriageTab() {
   const [rows, setRows] = useState<FleetMrSummary[] | null>(null)
@@ -71,6 +72,9 @@ function TriageTab() {
                   {r.open === 1 ? '' : 's'}
                 </span>
                 <div className="flex shrink-0 items-center gap-1">
+                  {r.riskHigh > 0 && <Badge tone="bad">🔴 {r.riskHigh} high</Badge>}
+                  {r.riskMedium > 0 && <Badge tone="warn">🟡 {r.riskMedium} medium</Badge>}
+                  {r.riskUnscored > 0 && <Badge tone="mute">— {r.riskUnscored} unscored</Badge>}
                   {r.approve > 0 && <Badge tone="ok">{r.approve} ready</Badge>}
                   {r.changes > 0 && <Badge tone="bad">{r.changes} changes</Badge>}
                   {r.needsReview > 0 && <Badge tone="mute">{r.needsReview} review</Badge>}

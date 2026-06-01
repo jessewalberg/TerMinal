@@ -177,6 +177,7 @@ scores:
   quality: <0-100|null>
   dependencies: <0-100|null>
   overall: <0-100>              # MIN of the six — weakest-link
+risk_tier: low | medium | high   # cross-PR triage — see "Risk tier" below
 findings_count: <int>
 suggestions_count: <int>
 avg_confidence: <float, one decimal>
@@ -353,6 +354,16 @@ clients). Per global §10: deps pinned exact, lockfile committed, ≥ 3 days old
   positive evidence the change is safe (you can articulate *why*, not just that
   nothing was found). Note: this project's merge bar is verdict + 0 medium+
   findings + tests pass; the overall score is informational, not a gate.
+
+## Risk tier (`risk_tier` frontmatter)
+
+Assign `risk_tier` on every review artifact (dashboard + Telegram triage sort on
+this field; missing → `unscored` in the UI until re-reviewed):
+
+- `high` — any scored axis < 70, OR `test_status: fail`, OR `verdict: blocked`,
+  OR the diff touches auth/payments/migrations/external APIs.
+- `medium` — `verdict: request-changes`, OR any scored axis 70–79.
+- `low` — `verdict: approve` AND every scored axis ≥ 80.
 
 ## Filing out-of-scope follow-ups (the reviewer can create tickets)
 

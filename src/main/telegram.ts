@@ -13,7 +13,8 @@ import {
 } from './template'
 import { readAgents, runAgent, listRuns, cancelRun, readAgentState, resetAgentState } from './agents'
 import { readPersonas } from './personas'
-import { parseCommand, classifyRunArgs, parsePollLine } from './telegram-parse'
+import { parseCommand, classifyRunArgs, classifyMrsArgs, parsePollLine } from './telegram-parse'
+import { matchesRiskFilter, riskWeight, RISK_EMOJI } from './risk-tier'
 import { sendUrl, getUpdatesUrl, parseUpdates, answerCallbackUrl, type TgInlineKeyboard } from './telegram-api'
 import { listTickets, createTicket, updateTicket, getTicket } from './backlog'
 import { readHitl, resolveHitl } from './hitl'
@@ -209,7 +210,7 @@ function cmdHelp() {
       '/hitl · /resolve <n> · /reopen <n>',
       '',
       'MRS · ACTIVITY · HARNESS',
-      '/mrs [@repo] · /mr <iid> · /activity [N] · /harness · /status',
+      '/mrs [@repo] [risk:high|risk:medium|unscored] · /mr <iid> · /activity [N] · /harness · /status',
       '',
       'BACKGROUND',
       '/bg [@repo] [claude|codex] [model] <prompt>',
@@ -471,16 +472,34 @@ function cmdResolveHitl(args: string[], resolved: boolean) {
 
 // --- MRs -------------------------------------------------------------------
 
-async function cmdMrs(repoToken?: string) {
+async function cmdMrs(args: string[]) {
+  const { repoToken, riskFilter } = classifyMrsArgs(args)
   const repo = resolveRepo(repoToken)
   if (!repo) return reply('No repo — /repos to list.')
   const r = await listMrs(repo.repoRoot)
   if (r.error) return reply(`⛔ ${r.error}`)
-  const open = r.mrs.filter((m) => m.state === 'opened').slice(0, 12)
-  if (!open.length) return reply(`No open MRs · ${repo.label}.`)
+  const open = r.mrs
+    .filter((m) => m.state === 'opened')
+    .filter((m) => matchesRiskFilter(m.review?.riskTier, riskFilter))
+    .sort((a, b) => {
+      const rw = riskWeight(a.review?.riskTier) - riskWeight(b.review?.riskTier)
+      return rw !== 0 ? rw : b.iid - a.iid
+    })
+    .slice(0, 12)
+  if (!open.length) {
+    const hint = riskFilter === 'all' ? '' : ` (${riskFilter})`
+    return reply(`No open MRs${hint} · ${repo.label}.`)
+  }
+  const filterNote = riskFilter === 'all' ? '' : ` · filter ${riskFilter}`
   reply(
-    `MRs · ${repo.label}:\n` +
-      open.map((m) => `• !${m.iid} ${m.title}${m.draft ? ' [draft]' : ''}`).join('\n'),
+    `MRs · ${repo.label}${filterNote}:\n` +
+      open
+        .map((m) => {
+          const tier = m.review?.riskTier || 'unscored'
+          const risk = `${RISK_EMOJI[tier]} ${tier}`
+          return `• !${m.iid} ${risk} ${m.title}${m.draft ? ' [draft]' : ''}`
+        })
+        .join('\n'),
   )
 }
 
@@ -997,7 +1016,7 @@ async function handle(text: string) {
       return cmdResolveHitl(args, false)
     case '/mrs':
     case '/prs':
-      return cmdMrs(args[0])
+      return cmdMrs(args)
     case '/mr':
     case '/pr':
       return cmdMr(args)
