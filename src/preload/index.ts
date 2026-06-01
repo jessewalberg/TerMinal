@@ -94,6 +94,11 @@ const gt = {
       ipcRenderer.on('agent:output', h)
       return () => ipcRenderer.removeListener('agent:output', h)
     },
+    onRunsChanged: (cb: (runs: unknown) => void) => {
+      const h = (_e: unknown, runs: unknown) => cb(runs)
+      ipcRenderer.on('runs:changed', h)
+      return () => ipcRenderer.removeListener('runs:changed', h)
+    },
   },
 
   // scheduled (cron) agent runs

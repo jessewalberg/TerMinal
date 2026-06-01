@@ -663,6 +663,7 @@ export type GtApi = {
     rerun: (run: UnifiedRun) => Promise<{ ok: true; runId?: string } | { error: string }>
     onStatus: (cb: (run: AgentRun) => void) => () => void
     onOutput: (cb: (p: { runId: string; chunk: string }) => void) => () => void
+    onRunsChanged: (cb: (runs: UnifiedRun[]) => void) => () => void
   }
   schedules: {
     list: () => Promise<Schedule[]>

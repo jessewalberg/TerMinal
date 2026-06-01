@@ -154,6 +154,8 @@ import { rerunRun } from './rerun'
 import type { UnifiedRun } from './cron-runs'
 import { registerMcpEverywhere } from './mcp-register'
 import { readCronRuns, readCronRunLog, listAllRuns, sweepStaleCronRuns } from './cron-runs'
+import { watchCronRuns, type CronRunsWatcher } from './cron-run-watch'
+import { publishRunsChanged, shouldPublishRunsChanged } from './run-change-events'
 import { summaryFor, agentROI, dailySpend, listAIRuns, type Range } from './ai-runs'
 import { startAICollectionLoop } from './ai-collectors'
 import { knownModels } from './ai-pricing'
@@ -183,6 +185,7 @@ import { readPersonas } from './personas'
 const LOGIN_SHELL = process.env.SHELL || '/bin/zsh'
 
 let win: BrowserWindow | null = null
+let cronRunsWatcher: CronRunsWatcher | null = null
 
 // Safe send: the PTY + watcher keep firing during window reload/close, and
 // win.webContents may already be destroyed — sending then throws an uncaught
@@ -192,6 +195,15 @@ function send(channel: string, ...args: unknown[]) {
     win.webContents.send(channel, ...args)
   }
 }
+
+function sendRunsChanged() {
+  publishRunsChanged((channel, payload) => send(channel, payload), listAllRuns)
+}
+
+function ensureCronRunsWatcher() {
+  if (!cronRunsWatcher) cronRunsWatcher = watchCronRuns(sendRunsChanged)
+}
+
 // One window now hosts MANY sessions, each its own PTY, keyed by a renderer-
 // generated tab key. Data IPC reads the *active* session; PTY IPC is routed by
 // key so every (even backgrounded) terminal keeps streaming.
@@ -449,8 +461,12 @@ function createWindow() {
   // push activity events to the renderer; poll all sessions for turn completion
   onActivity((ev) => send('activity:event', ev))
   startActivityTail() // surface externally-appended events (skills) live
-  onAgentEvent((channel, payload) => send(channel, payload))
+  onAgentEvent((channel, payload) => {
+    send(channel, payload)
+    if (shouldPublishRunsChanged(channel)) sendRunsChanged()
+  })
   loadPersistedRuns() // restore past agent runs
+  ensureCronRunsWatcher()
   if (!activityTimer) activityTimer = setInterval(pollActivity, 1500)
   // Real cron: install the headless runner at its stable path, then reconcile
   // launchd ↔ schedules.json (loads enabled jobs, removes any orphans). Jobs
@@ -684,7 +700,11 @@ ipcMain.handle(
   ) => runPrAgent(repoRootOf(cur().cwd), pr, kind, engine, persona, pipeline, model),
 )
 ipcMain.handle('agents:runs', () => listRuns())
-ipcMain.handle('agents:cancel', (_e, runId: string) => cancelRun(runId))
+ipcMain.handle('agents:cancel', (_e, runId: string) => {
+  const canceled = cancelRun(runId)
+  sendRunsChanged()
+  return canceled
+})
 ipcMain.handle('agents:remove-worktree', (_e, runId: string) => removeWorktree(runId))
 // Schedules are backed by real launchd jobs; every mutation syncs launchd in
 // lockstep, and `enriched` annotates each with its human cadence + next fire.
@@ -1280,4 +1300,9 @@ app.on('window-all-closed', () => {
   for (const s of sessions.values()) s.pty.kill()
   sessions.clear()
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  cronRunsWatcher?.close()
+  cronRunsWatcher = null
 })

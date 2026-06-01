@@ -7,6 +7,7 @@ import { onNavigate } from '../../lib/nav'
 import type { Tab, TabContext, UnifiedRun } from '../../lib/types'
 import { sanitizeLog as stripAnsi } from '../../lib/sanitizeLog'
 import { findRerunTarget, rerunSuccessMessage, type RerunResult } from './rerunState'
+import { shouldRefreshRunsFallback } from './runRefresh'
 
 // One global view across every run TerMinal has fired — cron (launchd, via
 // bin/terminal-cron) AND in-process (Run button on Agents/Tickets/PRs). The
@@ -56,11 +57,17 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
   const [rerunNotice, setRerunNotice] = useState<string | null>(null)
   const logRef = useRef<HTMLPreElement>(null)
   const rerunPollRef = useRef(0)
+  const runsRef = useRef<UnifiedRun[] | null>(null)
+  const fallbackTickRef = useRef(0)
 
-  const reload = async () => {
-    const nextRuns = await window.gt.agents.allRuns()
+  const applyRuns = (nextRuns: UnifiedRun[]) => {
+    runsRef.current = nextRuns
     setRuns(nextRuns)
     return nextRuns
+  }
+  const reload = async () => {
+    const nextRuns = await window.gt.agents.allRuns()
+    return applyRuns(nextRuns)
   }
   // Cost per runId from the AI ledger — joined into each row so the operator
   // sees "this run cost $X" without flipping tabs.
@@ -76,15 +83,31 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
     }
   }
   useEffect(() => {
-    reload()
+    let alive = true
+    const reloadIfAlive = async () => {
+      const nextRuns = await window.gt.agents.allRuns()
+      if (alive) applyRuns(nextRuns)
+    }
+    void reloadIfAlive()
     reloadCosts()
-    // Auto-refresh while at least one run is running. Cheap polling — the
-    // list itself is in-memory + tiny files on disk.
-    const t = setInterval(() => {
-      if (runs && runs.some((r) => r.status === 'running')) reload()
+    const offRunsChanged = window.gt.agents.onRunsChanged((nextRuns) => {
+      if (!alive) return
+      applyRuns(nextRuns)
       reloadCosts()
-    }, 2000)
-    return () => clearInterval(t)
+    })
+    // Auto-refresh while at least one run is running. Cheap polling — the
+    // list itself is in-memory + tiny files on disk. This remains as a
+    // fallback for missed file-watch events or app sleep/wake gaps.
+    const t = setInterval(() => {
+      fallbackTickRef.current += 1
+      if (shouldRefreshRunsFallback(runsRef.current, fallbackTickRef.current, 6)) void reloadIfAlive()
+      reloadCosts()
+    }, 5000)
+    return () => {
+      alive = false
+      offRunsChanged()
+      clearInterval(t)
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmtUsd = (n: number) => {
