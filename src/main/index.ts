@@ -85,6 +85,7 @@ import {
   setDisabled as setAgentDisabled,
   setAllDisabled as setAllSchedulesDisabled,
 } from './agents-disabled'
+import { startCiWebhookDashboard, stopCiWebhookDashboard } from './ci-webhook-launcher'
 import { scaffoldProject } from './scaffold'
 import { pickTemplateSource, isTemplateUrl, type TemplateSource } from './template'
 import {
@@ -1266,6 +1267,8 @@ app.whenReady().then(() => {
   // Background-task watcher (#0004) — reconciles bg-tasks.json state with
   // actual PIDs, sweeps completed tasks, fires Telegram pings on MR ready.
   startBgWatcher()
+  // CI webhook dashboard (#0005) — :4848 when harnessDir/prs/config.yml exists.
+  startCiWebhookDashboard()
   // Budget watcher — fires HITL pings at warnAt thresholds.
   startBudgetWatcher()
   app.on('activate', () => {
@@ -1277,6 +1280,7 @@ app.on('window-all-closed', () => {
   if (watchTimer) clearInterval(watchTimer)
   if (activityTimer) clearInterval(activityTimer)
   if (telegramTimer) clearInterval(telegramTimer)
+  stopCiWebhookDashboard()
   for (const s of sessions.values()) s.pty.kill()
   sessions.clear()
   if (process.platform !== 'darwin') app.quit()

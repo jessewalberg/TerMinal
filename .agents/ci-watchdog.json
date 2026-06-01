@@ -1,0 +1,10 @@
+{
+  "id": "ci-watchdog",
+  "title": "CI watchdog",
+  "description": "Self-healing CI: classify failed pipeline logs, auto-fix allowlisted failures (prettier v0), or file HITL.",
+  "icon": "ShieldAlert",
+  "opensPr": false,
+  "inPlace": true,
+  "engineHint": "claude",
+  "modelHint": "haiku"
+}
