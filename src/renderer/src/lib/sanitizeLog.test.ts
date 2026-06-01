@@ -31,6 +31,25 @@ describe('sanitizeLog', () => {
     )
   })
 
+  it('preserves CRLF-terminated lines instead of collapsing them to blank', () => {
+    // Real claude/codex PTY output ends lines with \r\n. The \r must NOT be
+    // treated as an in-line overwrite that wipes the line to empty.
+    expect(sanitizeLog('line one\r\nline two\r\nline three')).toBe('line one\nline two\nline three')
+  })
+
+  it('keeps a CRLF body intact (regression: Runs pane rendered blank)', () => {
+    const body = '## Tickets filed (10)\r\n\r\n| 0001 | Brief dead-end |\r\nDecision impact:\r\n'
+    expect(sanitizeLog(body)).toBe('## Tickets filed (10)\n\n| 0001 | Brief dead-end |\nDecision impact:\n')
+  })
+
+  it('still collapses a bare-\\r progress overlay even when CRLF lines surround it', () => {
+    expect(sanitizeLog('start\r\n10%\r50%\r100% done\r\nend')).toBe('start\n100% done\nend')
+  })
+
+  it('strips private-marker / intermediate CSI sequences (ESC[>4m, ESC[<u, ESC[?25h)', () => {
+    expect(sanitizeLog('\x1b[>4m\x1b[<u\x1b[?25hvisible')).toBe('visible')
+  })
+
   it('passes plain text through untouched', () => {
     expect(sanitizeLog('hello world\nno escapes here')).toBe('hello world\nno escapes here')
   })
