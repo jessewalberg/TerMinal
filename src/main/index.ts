@@ -178,6 +178,7 @@ import {
   startBgWatcher,
   type BgTask,
 } from './bg-tasks'
+import { startCiWebhookServer, stopCiWebhookServer } from './ci-webhook'
 import { readHitl, fileHitl, resolveHitl, removeHitl, type HitlItem } from './hitl'
 import { factoryHealth } from './factory-health'
 import { describeSpec, nextRun, type ScheduleSpec } from './cron'
@@ -1288,6 +1289,8 @@ app.whenReady().then(() => {
   // Background-task watcher (#0004) — reconciles bg-tasks.json state with
   // actual PIDs, sweeps completed tasks, fires Telegram pings on MR ready.
   startBgWatcher()
+  // CI pipeline webhook (:4848) — spawns .agents/ci-watchdog.sh on failed pipelines.
+  startCiWebhookServer()
   // Budget watcher — fires HITL pings at warnAt thresholds.
   startBudgetWatcher()
   app.on('activate', () => {
@@ -1299,6 +1302,7 @@ app.on('window-all-closed', () => {
   if (watchTimer) clearInterval(watchTimer)
   if (activityTimer) clearInterval(activityTimer)
   if (telegramTimer) clearInterval(telegramTimer)
+  stopCiWebhookServer()
   for (const s of sessions.values()) s.pty.kill()
   sessions.clear()
   if (process.platform !== 'darwin') app.quit()
