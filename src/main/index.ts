@@ -123,6 +123,7 @@ import {
   runPrAgent,
   listPipelines,
   listRuns,
+  readAgentRunLog,
   cancelRun,
   removeWorktree,
   onAgentEvent,
@@ -805,8 +806,9 @@ ipcMain.handle('runs:rerun', (_e, run: UnifiedRun) =>
 )
 ipcMain.handle('runs:log', (_e, source: 'cron' | 'agent', runId: string) => {
   if (source === 'cron') return readCronRunLog(runId)
-  // In-process agent run output lives in memory via listRuns(); look it up by id.
-  return listRuns().find((r) => r.id === runId)?.output || ''
+  // Prefer the durable log file. In-memory output can be stale if the renderer
+  // missed the final stream chunk or the app stayed open across a late flush.
+  return readAgentRunLog(runId, listRuns().find((r) => r.id === runId)?.output || '')
 })
 ipcMain.handle('schedules:disabled-list', () => listDisabled())
 ipcMain.handle('schedules:disabled-toggle', (_e, id: string, disabled: boolean) => setAgentDisabled(id, disabled))

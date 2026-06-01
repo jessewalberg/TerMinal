@@ -24,6 +24,7 @@ import { fileHitl } from './hitl'
 import { composeSteps, pipelineLabel, type Step } from './pipelines'
 import { buildEngineCmd } from './engine-cmd'
 import { createCursorStreamDecoder } from './cursor-stream'
+import { formatAgentRunCompletion, readRunLogFile } from './agent-run-log'
 
 export { listPipelines, type PipelineId } from './pipelines'
 
@@ -546,6 +547,9 @@ function appendLog(id: string, chunk: string) {
     /* best effort */
   }
 }
+export function readAgentRunLog(id: string, fallback = ''): string {
+  return readRunLogFile(id, { runsDir: RUNS_DIR, fallback })
+}
 
 // Load past runs from disk into memory at startup. Runs still marked 'running'
 // were orphaned by an app quit → mark 'interrupted'. Prune to the newest N.
@@ -814,7 +818,7 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     watchdogTimers.forEach(clearTimeout)
     watchdogTimers = []
   }
-  const finalize = (status: AgentRunStatus, exitCode?: number) => {
+  const finalize = (status: Exclude<AgentRunStatus, 'running'>, exitCode?: number) => {
     if (settled) return
     settled = true
     clearWatchdog()
@@ -822,6 +826,7 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     run.endedAt = Date.now()
     run.exitCode = exitCode
     procs.delete(run.id)
+    append(formatAgentRunCompletion({ status, exitCode, startedAt: run.startedAt, endedAt: run.endedAt }))
     persistMeta(run)
     emit('agent:status', run)
     // Try to extract claude -p / codex exec usage from the captured output

@@ -50,6 +50,7 @@ import type { BadgeTone } from '../../components/ui'
 import { navigateTo } from '../../lib/nav'
 import type { Tab, TabContext, Agent, AgentRun, Engine } from '../../lib/types'
 import { sanitizeLog as stripAnsi } from '../../lib/sanitizeLog'
+import { seedRunOutput, seedRunOutputs } from './agentRunOutputState'
 
 function fmtRelative(ts: number): string {
   const s = (Date.now() - ts) / 1000
@@ -565,11 +566,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
     window.gt.agents.list().then(setAgents)
     window.gt.agents.runs().then((rs) => {
       setRuns(rs)
-      setOutputs((o) => {
-        const next = { ...o }
-        for (const r of rs) if (next[r.id] === undefined) next[r.id] = r.output
-        return next
-      })
+      setOutputs((o) => seedRunOutputs(o, rs))
       if (rs[0]) setSel((s) => s ?? rs[0].id)
     })
     const offStatus = window.gt.agents.onStatus((run) => {
@@ -580,7 +577,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
         next[i] = run
         return next
       })
-      setOutputs((o) => (o[run.id] === undefined ? { ...o, [run.id]: run.output } : o))
+      setOutputs((o) => seedRunOutput(o, run))
       setSel((s) => s ?? run.id)
       // When a designer run finishes, reload the agents list so the newly-
       // saved entry shows up without a manual refresh — then auto-expand
@@ -632,6 +629,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
       return
     }
     setRuns((prev) => [r, ...prev.filter((x) => x.id !== r.id)])
+    setOutputs((o) => seedRunOutput(o, r))
     setSel(r.id)
   }
 
