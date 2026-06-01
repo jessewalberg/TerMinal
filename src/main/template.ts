@@ -43,15 +43,23 @@ export function cloneTemplateToTmp(
   repo: string,
   opts: { tmpPrefix: string; marker: string },
 ): TemplateSource | null {
+  // Reject git-style option prefixes — a settings value like
+  // `--config=core.sshCommand=…` would otherwise be parsed as clone flags.
+  if (!repo || repo.startsWith('-')) return null
+  let dir: string | undefined
   try {
-    const dir = mkdtempSync(join(tmpdir(), opts.tmpPrefix))
-    execFileSync('git', ['clone', '--depth', '1', repo, dir], { stdio: 'ignore', timeout: 60_000 })
+    dir = mkdtempSync(join(tmpdir(), opts.tmpPrefix))
+    execFileSync('git', ['clone', '--depth', '1', '--', repo, dir], {
+      stdio: 'ignore',
+      timeout: 60_000,
+    })
     if (!existsSync(join(dir, opts.marker))) {
       rmSync(dir, { recursive: true, force: true })
       return null
     }
     return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
   } catch {
+    if (dir) rmSync(dir, { recursive: true, force: true })
     return null
   }
 }

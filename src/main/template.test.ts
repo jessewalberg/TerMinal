@@ -4,6 +4,7 @@ import {
   pickTemplateSource,
   sourceCheckoutRoot,
   templateDirCandidates,
+  cloneTemplateToTmp,
 } from './template'
 
 describe('isTemplateUrl', () => {
@@ -22,6 +23,17 @@ describe('isTemplateUrl', () => {
 describe('sourceCheckoutRoot', () => {
   test('returns empty when no candidate contains the marker', () => {
     expect(sourceCheckoutRoot(['/no/such/path'], 'bin/release')).toBe('')
+  })
+})
+
+describe('cloneTemplateToTmp', () => {
+  test('rejects repo strings that look like git options', () => {
+    expect(
+      cloneTemplateToTmp('--config=core.sshCommand=evil', {
+        tmpPrefix: 'gt-test-',
+        marker: 'bootstrap.sh',
+      }),
+    ).toBeNull()
   })
 })
 
@@ -126,5 +138,16 @@ describe('pickTemplateSource', () => {
     })
     expect('error' in r).toBe(true)
     if ('error' in r) expect(r.error).toContain('.agents')
+  })
+
+  test('errors when templateRepo looks like a git option (injected cloneToTmp)', () => {
+    const r = pickTemplateSource({
+      candidates: [],
+      marker: 'bootstrap.sh',
+      hasMarker: () => false,
+      templateRepo: '--upload-pack=evil',
+      cloneToTmp: (repo) => cloneTemplateToTmp(repo, { tmpPrefix: 'gt-test-', marker: 'bootstrap.sh' }),
+    })
+    expect('error' in r).toBe(true)
   })
 })
