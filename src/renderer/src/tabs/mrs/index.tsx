@@ -202,12 +202,14 @@ function GroupedMrList({
   if (mrs.length === 0)
     return <div className="p-6 text-[12px] text-zinc-600">No {label}s for this repo.</div>
   const visible = mrs.filter((m) => matchesRiskFilter(m.review?.riskTier, riskFilter))
-  if (visible.length === 0)
+  if (visible.length === 0) {
+    const filterLabel = RISK_FILTERS.find((f) => f.id === riskFilter)?.label ?? riskFilter
     return (
       <div className="p-6 text-[12px] text-zinc-600">
-        No {label}s match <span className="font-mono">{riskFilter === 'all' ? 'all' : riskFilter}</span>.
+        No {label}s match <span className="font-mono">{filterLabel}</span>.
       </div>
     )
+  }
 
   // Opened: high risk first, then newer MRs (higher iid) within the same tier.
   const sortOpen = (a: Mr, b: Mr) => {

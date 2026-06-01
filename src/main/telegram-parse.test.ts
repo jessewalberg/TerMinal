@@ -53,6 +53,11 @@ describe('classifyMrsArgs', () => {
     expect(classifyMrsArgs(['risk:medium'])).toEqual({ repoToken: undefined, riskFilter: 'medium' })
     expect(classifyMrsArgs(['unscored', '@foo'])).toEqual({ repoToken: '@foo', riskFilter: 'unscored' })
   })
+
+  test('ignores unsupported risk tokens (no risk:low filter)', () => {
+    expect(classifyMrsArgs(['risk:low', '@foo'])).toEqual({ repoToken: '@foo', riskFilter: 'all' })
+    expect(classifyMrsArgs(['risk:high', 'risk:medium'])).toEqual({ repoToken: undefined, riskFilter: 'medium' })
+  })
 })
 
 describe('parsePollLine', () => {

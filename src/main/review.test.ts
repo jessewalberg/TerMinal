@@ -42,4 +42,16 @@ overall: 90
     writeFileSync(join(dir, 'abc9999.md'), `---\nverdict: approve\nrisk_tier: critical\n---\n`)
     expect(reviewForPrDir(dir)?.riskTier).toBe('unscored')
   })
+
+  test('parses uppercase risk_tier values', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gt-review-'))
+    writeFileSync(join(dir, 'abc1234.md'), `---\nverdict: approve\nrisk_tier: HIGH\n---\n`)
+    expect(reviewForPrDir(dir)?.riskTier).toBe('high')
+  })
+
+  test('returns unscored when meta.json exists but no artifact yet', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gt-review-'))
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify({ number: 42, commits: [] }))
+    expect(reviewForPrDir(dir)?.riskTier).toBe('unscored')
+  })
 })
