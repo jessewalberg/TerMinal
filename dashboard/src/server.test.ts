@@ -1,8 +1,10 @@
-import { test, expect, describe, beforeEach, afterEach } from 'bun:test'
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from 'bun:test'
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createApp } from './server'
+import { MAX_BODY_BYTES } from './read-body'
+import * as spawnWatchdog from './spawn-watchdog'
 
 describe('POST /api/ci-webhook/:repo', () => {
   let harnessDir: string
@@ -34,6 +36,7 @@ describe('POST /api/ci-webhook/:repo', () => {
     else process.env.GT_HARNESS_DIR = prevHarness
     rmSync(harnessDir, { recursive: true, force: true })
     rmSync(repoRoot, { recursive: true, force: true })
+    mock.restore()
   })
 
   test('rejects missing signature', async () => {
@@ -73,5 +76,63 @@ describe('POST /api/ci-webhook/:repo', () => {
       body,
     })
     expect(res.status).toBe(200)
+  })
+
+  test('rejects invalid json', async () => {
+    const app = createApp()
+    const res = await app.request('/api/ci-webhook/testrepo', {
+      method: 'POST',
+      headers: { 'X-Gitlab-Token': 'wh-secret' },
+      body: 'not-json',
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('invalid json')
+  })
+
+  test('rejects oversized body', async () => {
+    const app = createApp()
+    const res = await app.request('/api/ci-webhook/testrepo', {
+      method: 'POST',
+      headers: { 'X-Gitlab-Token': 'wh-secret' },
+      body: 'x'.repeat(MAX_BODY_BYTES + 1),
+    })
+    expect(res.status).toBe(413)
+  })
+
+  test('rejects unknown repo', async () => {
+    const app = createApp()
+    const res = await app.request('/api/ci-webhook/nope', {
+      method: 'POST',
+      headers: { 'X-Gitlab-Token': 'wh-secret' },
+      body: '{}',
+    })
+    expect(res.status).toBe(404)
+  })
+
+  test('passes CI env vars to spawn', async () => {
+    let captured: spawnWatchdog.WatchdogEnv | undefined
+    spyOn(spawnWatchdog, 'spawnCiWatchdog').mockImplementation((env) => {
+      captured = env
+      return { ok: true, pid: 12345 }
+    })
+
+    const app = createApp()
+    const body = JSON.stringify({
+      object_kind: 'pipeline',
+      object_attributes: { id: 42, ref: 'fix/ci', status: 'failed' },
+      merge_request: { iid: 7 },
+    })
+    const res = await app.request('/api/ci-webhook/testrepo', {
+      method: 'POST',
+      headers: { 'X-Gitlab-Token': 'wh-secret' },
+      body,
+    })
+    expect(res.status).toBe(200)
+    expect(captured).toEqual({
+      repoRoot,
+      pipelineId: '42',
+      mrIid: '7',
+      branch: 'fix/ci',
+    })
   })
 })

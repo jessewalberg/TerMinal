@@ -21,8 +21,17 @@ export function verifyGithubSignature(
   secret: string,
 ): VerifyResult {
   if (!signatureHeader) return { ok: false, reason: 'missing X-Hub-Signature-256' }
-  const expected = `sha256=${createHmac('sha256', secret).update(rawBody).digest('hex')}`
-  if (!safeEq(signatureHeader, expected)) return { ok: false, reason: 'bad github signature' }
+  if (!signatureHeader.startsWith('sha256=')) return { ok: false, reason: 'bad github signature' }
+  const expected = createHmac('sha256', secret).update(rawBody).digest('hex')
+  const got = signatureHeader.slice('sha256='.length)
+  if (got.length !== expected.length) return { ok: false, reason: 'bad github signature' }
+  try {
+    if (!timingSafeEqual(Buffer.from(got, 'hex'), Buffer.from(expected, 'hex'))) {
+      return { ok: false, reason: 'bad github signature' }
+    }
+  } catch {
+    return { ok: false, reason: 'bad github signature' }
+  }
   return { ok: true }
 }
 

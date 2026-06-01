@@ -25,6 +25,17 @@ repos:
     const cfg = parseHarnessConfigYaml('repos:\n  foo:\n    root: /x\n')
     expect(cfg.repos).toHaveLength(0)
   })
+
+  test('strips inline comments from values', () => {
+    const yaml = `
+repos:
+  terminal:
+    root: /Users/me/TerMinal
+    ci_webhook_secret: sekrit # gitlab token
+`
+    const cfg = parseHarnessConfigYaml(yaml)
+    expect(cfg.repos[0].ciWebhookSecret).toBe('sekrit')
+  })
 })
 
 describe('repoRootFor / webhookSecretFor', () => {

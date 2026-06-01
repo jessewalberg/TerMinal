@@ -33,6 +33,10 @@ state.
 - Webhooks only arrive while TerMinal (or a manually started dashboard) is
   listening — acceptable for v0 personal harness; launchd-backed always-on
   dashboard is a follow-up if needed.
+- Request bodies are capped at **256 KiB** — pipeline webhook JSON is tiny;
+  the limit prevents accidental memory exhaustion from malformed clients.
+- The server binds **127.0.0.1** only — webhooks are harness-local, not
+  exposed to the LAN.
 - Allowlist tuning is script-only; no app redeploy to broaden auto-fix classes.
 - Telegram `/ci` and HITL buttons come free from existing activity/HITL plumbing.
 

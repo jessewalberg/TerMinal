@@ -60,7 +60,9 @@ export function parseHarnessConfigYaml(raw: string): HarnessConfig {
     }
     const kv = trimmed.match(/^(\w+):\s*(.+)$/)
     if (!kv || !currentSlug) continue
-    const val = kv[2].replace(/^["']|["']$/g, '')
+    let val = kv[2].replace(/^["']|["']$/g, '')
+    const comment = val.indexOf(' #')
+    if (comment !== -1) val = val.slice(0, comment).trim()
     if (kv[1] === 'root') current.root = val
     if (kv[1] === 'ci_webhook_secret') current.ciWebhookSecret = val
   }
@@ -85,18 +87,21 @@ export function loadHarnessConfig(): HarnessConfig {
   }
 }
 
-export function repoRootFor(slug: string, cfg: HarnessConfig = loadHarnessConfig()): string | null {
+export function findRepoEntry(
+  slug: string,
+  cfg: HarnessConfig = loadHarnessConfig(),
+): RepoHarnessEntry | null {
   const target = slug.toLowerCase()
   for (const r of cfg.repos) {
-    if (r.slug.toLowerCase() === target) return r.root
+    if (r.slug.toLowerCase() === target) return r
   }
   return null
 }
 
+export function repoRootFor(slug: string, cfg: HarnessConfig = loadHarnessConfig()): string | null {
+  return findRepoEntry(slug, cfg)?.root ?? null
+}
+
 export function webhookSecretFor(slug: string, cfg: HarnessConfig = loadHarnessConfig()): string | null {
-  const target = slug.toLowerCase()
-  for (const r of cfg.repos) {
-    if (r.slug.toLowerCase() === target) return r.ciWebhookSecret
-  }
-  return null
+  return findRepoEntry(slug, cfg)?.ciWebhookSecret ?? null
 }

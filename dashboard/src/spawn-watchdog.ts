@@ -14,10 +14,13 @@ export type WatchdogEnv = {
 }
 
 const TERMINAL_BIN = join(homedir(), '.config', 'TerMinal', 'bin')
+const GLOBAL_SCRIPT = join(homedir(), '.config', 'TerMinal', 'scripts', 'ci-watchdog.sh')
 
 export function ciWatchdogScript(repoRoot: string): string | null {
-  const p = join(repoRoot, '.agents', 'ci-watchdog.sh')
-  return existsSync(p) ? p : null
+  const perRepo = join(repoRoot, '.agents', 'ci-watchdog.sh')
+  if (existsSync(perRepo)) return perRepo
+  if (existsSync(GLOBAL_SCRIPT)) return GLOBAL_SCRIPT
+  return null
 }
 
 export function spawnCiWatchdog(env: WatchdogEnv): { ok: true; pid: number } | { ok: false; error: string } {
@@ -25,6 +28,7 @@ export function spawnCiWatchdog(env: WatchdogEnv): { ok: true; pid: number } | {
   if (!script) return { ok: false, error: `no .agents/ci-watchdog.sh in ${env.repoRoot}` }
 
   const child = cpSpawn(script, [], {
+    cwd: env.repoRoot,
     detached: true,
     stdio: 'ignore',
     env: {
