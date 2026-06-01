@@ -3,7 +3,14 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
+import { app } from 'electron'
 import { telegramControlEnabled, readSettings, resolvedTemplateRepo } from './settings'
+import {
+  pickTemplateSource,
+  sourceCheckoutRoot,
+  templateDirCandidates,
+  cloneTemplateToTmp,
+} from './template'
 import { readAgents, runAgent, listRuns, cancelRun, readAgentState, resetAgentState } from './agents'
 import { readPersonas } from './personas'
 import { parseCommand, classifyRunArgs, parsePollLine } from './telegram-parse'
@@ -33,25 +40,13 @@ const STATUS_EMOJI: Record<string, string> = {
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 
-function sourceCheckoutRoot(marker: string): string {
-  const candidates = [
+function checkoutRoots(): string[] {
+  return [
     process.env.GT_TERMINAL_REPO || '',
     process.cwd(),
+    app.getAppPath(),
     join(moduleDir, '..', '..'),
   ].filter(Boolean)
-  for (const c of candidates) {
-    if (existsSync(join(c, marker))) return c
-  }
-  return ''
-}
-
-function localProjectTemplateRoot(): string {
-  const configured = resolvedTemplateRepo()
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(configured) && existsSync(join(configured, '.agents'))) {
-    return configured
-  }
-  const checkout = sourceCheckoutRoot(join('templates', 'project-template', '.agents'))
-  return checkout ? join(checkout, 'templates', 'project-template') : ''
 }
 
 const nativeConfigured = () => {
@@ -618,7 +613,7 @@ function cmdRebuild() {
     }
   }
   // Resolve the source checkout the same way the Settings panel does.
-  const repoRoot = sourceCheckoutRoot(join('bin', 'release'))
+  const repoRoot = sourceCheckoutRoot(checkoutRoots(), join('bin', 'release'))
   if (!repoRoot) {
     return reply('⛔ bin/release not found — set GT_TERMINAL_REPO or run from the source checkout.')
   }
@@ -649,16 +644,21 @@ function cmdInstall(args: string[]) {
   if (!agentId) return reply('Usage: /install <agent> [@repo]')
   const repo = resolveRepo(args[1])
   if (!repo) return reply('No repo — /repos to list.')
-  // Source: project-template's .agents/<id>.sh + sidecar JSON.
-  const templateRoot = localProjectTemplateRoot()
-  if (!templateRoot) {
-    return reply('No local project-template checkout — initialize templates/project-template or set Settings → template repo to a local path.')
+  const src = pickTemplateSource({
+    candidates: templateDirCandidates(resolvedTemplateRepo(), checkoutRoots()),
+    marker: '.agents',
+    templateRepo: resolvedTemplateRepo(),
+    cloneToTmp: (r) => cloneTemplateToTmp(r, { tmpPrefix: 'gt-template-', marker: '.agents' }),
+  })
+  if ('error' in src) {
+    return reply(`⛔ ${src.error}`)
   }
-  const srcSh = join(templateRoot, '.agents', `${agentId}.sh`)
-  const srcJson = join(templateRoot, '.agents', `${agentId}.json`)
-  if (!existsSync(srcSh)) return reply(`No ${agentId}.sh in project-template/.agents.`)
-  const dstDir = join(repo.repoRoot, '.agents')
   try {
+    const templateRoot = src.dir
+    const srcSh = join(templateRoot, '.agents', `${agentId}.sh`)
+    const srcJson = join(templateRoot, '.agents', `${agentId}.json`)
+    if (!existsSync(srcSh)) return reply(`No ${agentId}.sh in project-template/.agents.`)
+    const dstDir = join(repo.repoRoot, '.agents')
     mkdirSync(dstDir, { recursive: true })
     writeFileSync(join(dstDir, `${agentId}.sh`), readFileSync(srcSh, 'utf8'), { mode: 0o755 })
     if (existsSync(srcJson))
@@ -666,6 +666,8 @@ function cmdInstall(args: string[]) {
     reply(`📦 Installed ${agentId} into ${repo.label}/.agents/`)
   } catch (e) {
     reply(`⛔ install failed: ${(e as Error).message}`)
+  } finally {
+    src.cleanup?.()
   }
 }
 

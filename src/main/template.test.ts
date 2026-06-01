@@ -1,5 +1,10 @@
 import { test, expect, describe } from 'bun:test'
-import { isTemplateUrl, pickTemplateSource } from './template'
+import {
+  isTemplateUrl,
+  pickTemplateSource,
+  sourceCheckoutRoot,
+  templateDirCandidates,
+} from './template'
 
 describe('isTemplateUrl', () => {
   test('true for scheme:// urls', () => {
@@ -14,14 +19,35 @@ describe('isTemplateUrl', () => {
   })
 })
 
-describe('pickTemplateSource', () => {
-  const presentIn = (dirs: string[]) => (dir: string) => dirs.includes(dir)
+describe('sourceCheckoutRoot', () => {
+  test('returns empty when no candidate contains the marker', () => {
+    expect(sourceCheckoutRoot(['/no/such/path'], 'bin/release')).toBe('')
+  })
+})
 
-  test('returns the first local candidate that has bootstrap.sh and never clones', () => {
+describe('templateDirCandidates', () => {
+  test('includes configured local path and submodule dirs under each root', () => {
+    expect(
+      templateDirCandidates('/local/template', ['/repo', '/other']),
+    ).toEqual(['/local/template', '/repo/templates/project-template', '/other/templates/project-template'])
+  })
+  test('skips URL configured repos (clone path handles those)', () => {
+    expect(templateDirCandidates('https://github.com/x/y', ['/repo'])).toEqual([
+      '/repo/templates/project-template',
+    ])
+  })
+})
+
+describe('pickTemplateSource', () => {
+  const presentIn = (dirs: string[]) => (_dir: string, marker: string) =>
+    dirs.includes(`${_dir}/${marker}`)
+
+  test('returns the first local candidate that has the marker and never clones', () => {
     let cloned = false
     const r = pickTemplateSource({
       candidates: ['/a', '/b', '/c'],
-      hasBootstrap: presentIn(['/b', '/c']),
+      marker: 'bootstrap.sh',
+      hasMarker: presentIn(['/b/bootstrap.sh', '/c/bootstrap.sh']),
       templateRepo: 'https://example.com/repo',
       cloneToTmp: () => {
         cloned = true
@@ -32,11 +58,42 @@ describe('pickTemplateSource', () => {
     expect(cloned).toBe(false)
   })
 
-  test('clones to a tmp dir when no local candidate has bootstrap.sh (the packaged-app path)', () => {
+  test('calls onLocalPick when a local candidate wins', () => {
+    let refreshed: string | null = null
+    pickTemplateSource({
+      candidates: ['/local'],
+      marker: 'bootstrap.sh',
+      hasMarker: presentIn(['/local/bootstrap.sh']),
+      templateRepo: '',
+      cloneToTmp: () => null,
+      onLocalPick: (dir) => {
+        refreshed = dir
+      },
+    })
+    expect(refreshed).toBe('/local')
+  })
+
+  test('does not call onLocalPick when cloning', () => {
+    let refreshed = false
+    pickTemplateSource({
+      candidates: [],
+      marker: '.agents',
+      hasMarker: () => false,
+      templateRepo: 'https://example.com/repo',
+      cloneToTmp: () => ({ dir: '/tmp/clone', cleanup() {} }),
+      onLocalPick: () => {
+        refreshed = true
+      },
+    })
+    expect(refreshed).toBe(false)
+  })
+
+  test('clones to a tmp dir when no local candidate has the marker (the packaged-app path)', () => {
     const cleanup = () => {}
     const r = pickTemplateSource({
       candidates: ['/a', '/b'],
-      hasBootstrap: presentIn([]),
+      marker: 'bootstrap.sh',
+      hasMarker: () => false,
       templateRepo: 'https://example.com/repo',
       cloneToTmp: (repo) => {
         expect(repo).toBe('https://example.com/repo')
@@ -49,7 +106,8 @@ describe('pickTemplateSource', () => {
   test('errors when no local candidate and no templateRepo to clone', () => {
     const r = pickTemplateSource({
       candidates: ['/a'],
-      hasBootstrap: presentIn([]),
+      marker: 'bootstrap.sh',
+      hasMarker: () => false,
       templateRepo: '',
       cloneToTmp: () => {
         throw new Error('should not clone when templateRepo is empty')
@@ -61,10 +119,12 @@ describe('pickTemplateSource', () => {
   test('errors when the clone falls through (cloneToTmp returns null)', () => {
     const r = pickTemplateSource({
       candidates: [],
-      hasBootstrap: presentIn([]),
+      marker: '.agents',
+      hasMarker: () => false,
       templateRepo: 'https://example.com/repo',
       cloneToTmp: () => null,
     })
     expect('error' in r).toBe(true)
+    if ('error' in r) expect(r.error).toContain('.agents')
   })
 })
