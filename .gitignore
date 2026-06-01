@@ -8,3 +8,7 @@ dist
 backlog/.next-id.lock
 sessions/.next-id.lock
 .status.md
+# Tool-generated local indexes / scratch (CodeGraph, Cursor, scheduler lock)
+.codegraph/
+.cursor/
+.claude/scheduled_tasks.lock
