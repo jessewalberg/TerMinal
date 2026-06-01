@@ -40,12 +40,68 @@ describe('createCursorStreamDecoder', () => {
     expect(d(JSON.stringify({ type: 'thinking', subtype: 'delta', text: 'hmm' }) + '\n')).toBe('')
   })
 
+  test('renders Cursor tool_call events with tool name and useful args/result details', () => {
+    const d = createCursorStreamDecoder()
+    expect(
+      d(
+        JSON.stringify({
+          type: 'tool_call',
+          subtype: 'started',
+          call_id: 'toolu_1',
+          tool_call: {
+            writeToolCall: {
+              args: { path: 'summary.txt', fileText: '# README Summary\n\n...', toolCallId: 'toolu_1' },
+            },
+          },
+        }) + '\n',
+      ),
+    ).toBe('· write summary.txt\n')
+    expect(
+      d(
+        JSON.stringify({
+          type: 'tool_call',
+          subtype: 'completed',
+          call_id: 'toolu_1',
+          tool_call: {
+            writeToolCall: {
+              args: { path: 'summary.txt', toolCallId: 'toolu_1' },
+              result: { success: { path: '/repo/summary.txt', linesCreated: 19, fileSize: 942 } },
+            },
+          },
+        }) + '\n',
+      ),
+    ).toBe('· write completed /repo/summary.txt (19 lines, 942 B)\n')
+  })
+
+  test('uses the started tool call context when completed events omit args', () => {
+    const d = createCursorStreamDecoder()
+    expect(
+      d(
+        JSON.stringify({
+          type: 'tool_call',
+          subtype: 'started',
+          call_id: 'toolu_2',
+          tool_call: { shellToolCall: { args: { command: 'bun test src/main/rerun.test.ts' } } },
+        }) + '\n',
+      ),
+    ).toBe('· shell bun test src/main/rerun.test.ts\n')
+    expect(
+      d(
+        JSON.stringify({
+          type: 'tool_call',
+          subtype: 'completed',
+          call_id: 'toolu_2',
+          tool_call: { shellToolCall: { result: { success: { exitCode: 0 } } } },
+        }) + '\n',
+      ),
+    ).toBe('· shell completed bun test src/main/rerun.test.ts (exit 0)\n')
+  })
+
   test('breadcrumbs unknown top-level event types so tool activity shows progress', () => {
     const d = createCursorStreamDecoder()
-    expect(d(JSON.stringify({ type: 'tool_call', subtype: 'started', name: 'shell' }) + '\n')).toBe(
-      '· tool_call:started shell\n',
+    expect(d(JSON.stringify({ type: 'connection', subtype: 'reconnecting' }) + '\n')).toBe(
+      '· connection:reconnecting\n',
     )
-    expect(d(JSON.stringify({ type: 'tool_call', subtype: 'completed' }) + '\n')).toBe('· tool_call:completed\n')
   })
 
   test('breadcrumbs non-text assistant content parts (e.g. tool_use) but still emits text parts', () => {
