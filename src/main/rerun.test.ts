@@ -45,15 +45,34 @@ function spyDeps(
 ): RerunDeps & {
   scheduleCalls: string[]
   agentCalls: Array<{ repoRoot: string; agentId: string; engine?: Engine }>
+  ticketCalls: Array<{
+    repoRoot: string
+    ticketId: number
+    engine?: Engine
+    persona?: string
+    pipeline?: string
+  }>
 } {
   const scheduleCalls: string[] = []
   const agentCalls: Array<{ repoRoot: string; agentId: string; engine?: Engine }> = []
+  const ticketCalls: Array<{
+    repoRoot: string
+    ticketId: number
+    engine?: Engine
+    persona?: string
+    pipeline?: string
+  }> = []
   return {
     scheduleCalls,
     agentCalls,
+    ticketCalls,
     scheduleExists: () => opts.scheduleExists ?? true,
     runSchedule: (id) => {
       scheduleCalls.push(id)
+    },
+    runTicket: (repoRoot, ticketId, engine, persona, pipeline) => {
+      ticketCalls.push({ repoRoot, ticketId, engine, persona, pipeline })
+      return fakeAgentRun({ id: 'ticket-new-run', agentId: `ticket-${ticketId}` })
     },
     runAgent: (repoRoot, agentId, engine) => {
       agentCalls.push({ repoRoot, agentId, engine })
@@ -87,6 +106,30 @@ describe('rerunRun', () => {
     const res = rerunRun(makeRun({ source: 'agent', repoRoot: '/repos/gamma', agentId: 'lint' }), deps)
     expect(res).toEqual({ ok: true, runId: 'new-run' })
     expect(deps.agentCalls).toEqual([{ repoRoot: '/repos/gamma', agentId: 'lint', engine: 'codex' }])
+  })
+
+  it('re-dispatches ticket implementation runs through the ticket runner', () => {
+    const deps = spyDeps({ agentResult: { error: 'unknown agent' } })
+    const res = rerunRun(
+      makeRun({
+        agentId: 'ticket-5',
+        agentTitle: 'Implement #5',
+        persona: 'Principal architect',
+        pipeline: 'Review + Iterate',
+      }),
+      deps,
+    )
+    expect(res).toEqual({ ok: true, runId: 'ticket-new-run' })
+    expect(deps.agentCalls).toEqual([])
+    expect(deps.ticketCalls).toEqual([
+      {
+        repoRoot: '/repos/alpha',
+        ticketId: 5,
+        engine: 'codex',
+        persona: 'Principal architect',
+        pipeline: 'Review + Iterate',
+      },
+    ])
   })
 
   it('propagates an error from runAgent (e.g. unknown agent)', () => {

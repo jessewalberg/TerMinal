@@ -107,6 +107,8 @@ export type UnifiedRun = {
   repoLabel: string
   branch: string
   worktree: string
+  persona?: string
+  pipeline?: string
   scheduleId?: string
   error?: string
   force?: boolean
@@ -127,6 +129,8 @@ function agentRunToUnified(r: AgentRun): UnifiedRun {
     repoLabel: basename(r.repoRoot) || '',
     branch: r.branch,
     worktree: r.worktree,
+    persona: r.persona,
+    pipeline: r.pipeline,
     force: r.force,
   }
 }

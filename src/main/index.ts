@@ -769,6 +769,17 @@ ipcMain.handle('runs:rerun', (_e, run: UnifiedRun) =>
   rerunRun(run, {
     scheduleExists: (id) => !!getSchedule(id),
     runSchedule: runScheduleNow,
+    runTicket: (repoRoot, ticketId, engine, personaTitle, pipelineTitle) => {
+      const ticket = listTickets(repoRoot).find((t) => t.id === ticketId)
+      if (!ticket) return { error: `ticket #${ticketId} not found` }
+      const personaId = personaTitle
+        ? readPersonas(repoRoot).find((p) => p.id === personaTitle || p.title === personaTitle)?.id
+        : undefined
+      const pipelineId = pipelineTitle
+        ? listPipelines().find((p) => p.id === pipelineTitle || p.title === pipelineTitle)?.id
+        : undefined
+      return runTicketAgent(repoRoot, ticket, engine || 'codex', personaId, pipelineId)
+    },
     runAgent,
   }),
 )

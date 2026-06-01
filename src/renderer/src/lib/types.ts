@@ -332,6 +332,8 @@ export type UnifiedRun = {
   repoLabel: string
   branch: string
   worktree: string
+  persona?: string
+  pipeline?: string
   scheduleId?: string
   error?: string
   /** Snapshot at run-time of the agent's force flag. */
