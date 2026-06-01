@@ -71,7 +71,7 @@ describe('pickTemplateSource', () => {
   })
 
   test('calls onLocalPick when a local candidate wins', () => {
-    let refreshed: string | null = null
+    let refreshed = ''
     pickTemplateSource({
       candidates: ['/local'],
       marker: 'bootstrap.sh',

@@ -57,7 +57,8 @@ export function cloneTemplateToTmp(
       rmSync(dir, { recursive: true, force: true })
       return null
     }
-    return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+    const cloneDir = dir
+    return { dir: cloneDir, cleanup: () => rmSync(cloneDir, { recursive: true, force: true }) }
   } catch {
     if (dir) rmSync(dir, { recursive: true, force: true })
     return null
