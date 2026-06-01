@@ -22,8 +22,24 @@ const TAIL_TURNS = 60
 const WINDOW_MS = 10 * 60_000
 const REPEAT_FLOOR = 3
 const RE_NOTIFY_MS = 6 * 60 * 60_000 // don't re-file the same (session, sig) within 6h
+const RECOVERY_WINDOW_MS = 2 * 60_000
+const READ_BEFORE_WRITE_ERROR = 'File has not been read yet. Read it first before writing to it.'
+const WRITE_TOOL_NAMES = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 
-type ErrorTurn = { ts: number; signature: string; preview: string }
+type ErrorTurn = {
+  ts: number
+  signature: string
+  preview: string
+  eventIndex: number
+  toolUseId: string
+  toolName?: string
+  filePath?: string
+}
+
+type ToolUseInfo = { toolName: string; filePath?: string }
+type TranscriptEvent =
+  | ({ kind: 'tool_use'; ts: number; toolUseId: string } & ToolUseInfo)
+  | ({ kind: 'tool_result'; ts: number; toolUseId: string; isError: boolean; text: string } & Partial<ToolUseInfo>)
 
 export type WedgedSession = {
   sessionId: string
@@ -67,6 +83,40 @@ function normalizeErrorText(s: string): { signature: string; preview: string } {
   return { signature, preview: cleaned }
 }
 
+function contentText(content: unknown): string {
+  return typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? content.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('\n')
+      : ''
+}
+
+function toolUseInfo(c: any): ToolUseInfo | null {
+  if (c?.type !== 'tool_use' || typeof c.id !== 'string' || typeof c.name !== 'string') return null
+  const filePath = typeof c.input?.file_path === 'string' ? c.input.file_path : undefined
+  return { toolName: c.name, filePath }
+}
+
+function isWriteTool(toolName?: string): boolean {
+  return !!toolName && WRITE_TOOL_NAMES.has(toolName)
+}
+
+function isRecoveredReadBeforeWriteError(error: ErrorTurn, events: TranscriptEvent[]): boolean {
+  if (!error.preview.includes(READ_BEFORE_WRITE_ERROR)) return false
+  if (!error.filePath || !isWriteTool(error.toolName)) return false
+
+  let readSucceeded = false
+  for (let i = error.eventIndex + 1; i < events.length; i++) {
+    const event = events[i]
+    if (event.ts - error.ts > RECOVERY_WINDOW_MS) break
+    if (event.kind !== 'tool_result' || event.filePath !== error.filePath || event.isError) continue
+
+    if (event.toolName === 'Read') readSucceeded = true
+    if (readSucceeded && isWriteTool(event.toolName)) return true
+  }
+  return false
+}
+
 function extractErrorTurns(file: string): ErrorTurn[] {
   let raw = ''
   try {
@@ -76,6 +126,8 @@ function extractErrorTurns(file: string): ErrorTurn[] {
   }
   const lines = raw.split('\n').filter((l) => l.trim())
   const tail = lines.slice(-TAIL_TURNS * 4)
+  const toolUses = new Map<string, ToolUseInfo>()
+  const events: TranscriptEvent[] = []
   const errs: ErrorTurn[] = []
   for (const line of tail) {
     let obj: any
@@ -85,33 +137,55 @@ function extractErrorTurns(file: string): ErrorTurn[] {
       continue
     }
     const msg = obj.message
-    if (!msg || msg.role !== 'user') continue
+    if (!msg) continue
     const content = msg.content
     if (!Array.isArray(content)) continue
     const ts = typeof obj.timestamp === 'number' ? obj.timestamp : Date.parse(obj.timestamp || '')
+    const safeTs = Number.isFinite(ts) ? ts : Date.now()
+
+    if (msg.role === 'assistant') {
+      for (const c of content) {
+        const info = toolUseInfo(c)
+        if (!info) continue
+        toolUses.set(c.id, info)
+        events.push({ kind: 'tool_use', ts: safeTs, toolUseId: c.id, ...info })
+      }
+      continue
+    }
+
+    if (msg.role !== 'user') continue
     for (const c of content) {
       if (c?.type !== 'tool_result') continue
       const isError = c.is_error === true
-      const text =
-        typeof c.content === 'string'
-          ? c.content
-          : Array.isArray(c.content)
-            ? c.content.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('\n')
-            : ''
+      const text = contentText(c.content)
       if (!text) continue
+      const toolUseId = typeof c.tool_use_id === 'string' ? c.tool_use_id : ''
+      const info = toolUses.get(toolUseId)
+      const eventIndex = events.push({
+        kind: 'tool_result',
+        ts: safeTs,
+        toolUseId,
+        isError,
+        text,
+        ...info,
+      }) - 1
       const looksLikeError =
         isError ||
         /\b(error|exception|traceback|failed|fatal|enoent|eacces|panic|killed)\b/i.test(text.slice(0, 400))
       if (!looksLikeError) continue
       const norm = normalizeErrorText(text)
       errs.push({
-        ts: Number.isFinite(ts) ? ts : Date.now(),
+        ts: safeTs,
         signature: norm.signature,
         preview: norm.preview,
+        eventIndex,
+        toolUseId,
+        toolName: info?.toolName,
+        filePath: info?.filePath,
       })
     }
   }
-  return errs
+  return errs.filter((e) => !isRecoveredReadBeforeWriteError(e, events))
 }
 
 function sessionCwd(file: string): string {
