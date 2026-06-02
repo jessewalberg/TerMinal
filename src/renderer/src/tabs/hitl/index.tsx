@@ -151,6 +151,7 @@ function HitlTab(_props: { ctx: TabContext }) {
                     )}
                     <button
                       onClick={async () => {
+                        if (!confirm('Remove this HITL item?')) return
                         await window.gt.hitl.remove(h.id)
                         reload()
                       }}
