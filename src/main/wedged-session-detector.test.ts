@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const claudeProjects = join(homedir(), '.claude', 'projects')
+const codexSessions = join(homedir(), '.codex', 'sessions')
 const testDirs: string[] = []
 
 mock.module('electron', () => ({
@@ -53,6 +54,101 @@ describe('detectWedgedSessions', () => {
     expect(wedged[0].preview).toBe('<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>')
   })
 })
+
+describe('detectWedgedSessions — codex sessions', () => {
+  test('flags a codex session repeating the same function_call_output error', () => {
+    const id = `codex-wedged-${Date.now()}`
+    writeCodexSession([
+      codexMeta('2026-06-01T02:39:00.000Z', id, '/tmp/codexrepo'),
+      codexFnOutput('2026-06-01T02:39:30.000Z', 'a', codexErrOutput()),
+      codexFnOutput('2026-06-01T02:41:00.000Z', 'b', codexErrOutput()),
+      codexFnOutput('2026-06-01T02:43:00.000Z', 'c', codexErrOutput()),
+    ])
+
+    const wedged = detectWedgedSessions().filter((w) => w.sessionId === id)
+
+    expect(wedged).toHaveLength(1)
+    expect(wedged[0].repeats).toBe(3)
+    expect(wedged[0].engine).toBe('codex')
+    expect(wedged[0].cwd).toBe('/tmp/codexrepo')
+  })
+
+  test('ignores a codex session whose outputs are clean', () => {
+    const id = `codex-clean-${Date.now()}`
+    const ok = 'Wall time: 0.10 seconds\nOutput:\nok'
+    writeCodexSession([
+      codexMeta('2026-06-01T02:39:00.000Z', id, '/tmp/codexrepo'),
+      codexFnOutput('2026-06-01T02:39:30.000Z', 'a', ok),
+      codexFnOutput('2026-06-01T02:41:00.000Z', 'b', ok),
+      codexFnOutput('2026-06-01T02:43:00.000Z', 'c', ok),
+    ])
+
+    expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toEqual([])
+  })
+
+  test('ignores repeated code-0 outputs even when the body looks error-shaped', () => {
+    const id = `codex-code0-${Date.now()}`
+    // Real codex envelope: "Process exited with code 0" = success, even if the
+    // output body starts with "error" / contains failure words (#7 follow-up).
+    const ok =
+      'Chunk ID: abc\nWall time: 0.10 seconds\nProcess exited with code 0\nOutput:\nerror handlers registered successfully'
+    writeCodexSession([
+      codexMeta('2026-06-01T02:39:00.000Z', id, '/tmp/codexrepo'),
+      codexFnOutput('2026-06-01T02:39:30.000Z', 'a', ok),
+      codexFnOutput('2026-06-01T02:41:00.000Z', 'b', ok),
+      codexFnOutput('2026-06-01T02:43:00.000Z', 'c', ok),
+    ])
+    expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toEqual([])
+  })
+
+  test('flags repeated NON-zero exit outputs (envelope says failure)', () => {
+    const id = `codex-nonzero-${Date.now()}`
+    const bad = 'Wall time: 0.10 seconds\nProcess exited with code 1\nOutput:\nboom'
+    writeCodexSession([
+      codexMeta('2026-06-01T02:39:00.000Z', id, '/tmp/codexrepo'),
+      codexFnOutput('2026-06-01T02:39:30.000Z', 'a', bad),
+      codexFnOutput('2026-06-01T02:41:00.000Z', 'b', bad),
+      codexFnOutput('2026-06-01T02:43:00.000Z', 'c', bad),
+    ])
+    expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toHaveLength(1)
+  })
+
+  test('ignores repeated SUCCESS outputs that merely mention the word error', () => {
+    const id = `codex-success-error-word-${Date.now()}`
+    // A successful tool result that happens to contain "error" in prose — must
+    // NOT be mistaken for a repeated failure (#7 review finding).
+    const ok = 'Wall time: 0.10 seconds\nOutput:\nAll 5 error handlers registered successfully'
+    writeCodexSession([
+      codexMeta('2026-06-01T02:39:00.000Z', id, '/tmp/codexrepo'),
+      codexFnOutput('2026-06-01T02:39:30.000Z', 'a', ok),
+      codexFnOutput('2026-06-01T02:41:00.000Z', 'b', ok),
+      codexFnOutput('2026-06-01T02:43:00.000Z', 'c', ok),
+    ])
+
+    expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toEqual([])
+  })
+})
+
+function writeCodexSession(rows: unknown[]) {
+  if (!existsSync(codexSessions)) mkdirSync(codexSessions, { recursive: true })
+  const dir = mkdtempSync(join(codexSessions, '-terminal-wedged-codex-test-'))
+  testDirs.push(dir)
+  writeFileSync(join(dir, `rollout-test-${Date.now()}.jsonl`), rows.map((r) => JSON.stringify(r)).join('\n'))
+}
+
+function codexMeta(timestamp: string, id: string, cwd: string) {
+  return { type: 'session_meta', timestamp, payload: { id, cwd } }
+}
+
+function codexFnOutput(timestamp: string, callId: string, output: string) {
+  return { type: 'response_item', timestamp, payload: { type: 'function_call_output', call_id: callId, output } }
+}
+
+// Mirrors a real codex tool error: a "Wall time / Output:" preamble wrapping an
+// embedded JSON error payload.
+function codexErrOutput() {
+  return 'Wall time: 0.33 seconds\nOutput:\n[{"type":"text","text":"{\"error\":\"invalid_request\",\"message\":\"Invalid request.\",\"status\":400}"}]'
+}
 
 function writeClaudeSession(sessionId: string, rows: unknown[]) {
   if (!existsSync(claudeProjects)) mkdirSync(claudeProjects, { recursive: true })
