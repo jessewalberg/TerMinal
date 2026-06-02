@@ -38,6 +38,26 @@ stack once, in parallel, after it's built." Two reasons this beats per-PR review
 This is an AFK mode: **arm the Telegram bridge** (`/notify`) at kickoff and ping
 at checkpoints. If the machine has no Telegram setup, run anyway but say so.
 
+## TerMinal run visibility
+
+At kickoff, register this slash-skill as a visible TerMinal workflow run. If
+`terminal-cli` is on PATH, run:
+
+```bash
+run_id="$(terminal-cli run start stacked-mr "Stacked MR" \
+  --engine "${TERMINAL_ENGINE:-codex}" \
+  --repo "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" \
+  --branch "$(git branch --show-current 2>/dev/null || true)" \
+  --worktree "$(pwd)")"
+```
+
+Record `run_id` in the stack ledger. At major checkpoints append a short line
+with `terminal-cli run log "$run_id" "<checkpoint>"`. At the morning handoff,
+finalize it with `terminal-cli run finish "$run_id" done --exit-code 0`; if the
+run blocks or fails, finalize it as `failed` with `--error "<reason>"`. If
+`terminal-cli` is unavailable, continue the work and say the run could not be
+registered.
+
 ## The stacking model
 
 ```
