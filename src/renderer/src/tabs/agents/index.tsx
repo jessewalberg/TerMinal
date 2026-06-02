@@ -499,11 +499,23 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
   useEffect(() => {
     const load = () => window.gt.agents.allRuns().then(setAllRuns)
     load()
-    const off = window.gt.activity.onEvent(load)
+    // The activity firehose can fire many events for a single fs-watch tick
+    // (drainTail broadcasts every new line), which previously meant one
+    // allRuns() IPC per line. Coalesce a burst into one trailing reload.
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const debouncedLoad = () => {
+      if (timer) return
+      timer = setTimeout(() => {
+        timer = null
+        load()
+      }, 250)
+    }
+    const off = window.gt.activity.onEvent(debouncedLoad)
     const t = setInterval(load, 30_000)
     return () => {
       off()
       clearInterval(t)
+      if (timer) clearTimeout(timer)
     }
   }, [])
   // The rail lists THIS repo's agents, so its run status must come from THIS
@@ -546,18 +558,26 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
   // of who started it. The state IPC is one file read — re-running it on
   // every activity tick is dirt-cheap.
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const debouncedReload = () => {
+      if (!selAgentId || timer) return
+      timer = setTimeout(() => {
+        timer = null
+        reloadState(selAgentId)
+      }, 250)
+    }
     const offStatus = window.gt.agents.onStatus((run) => {
       const r = run as { agentId?: string; status?: string }
       if (r.agentId === selAgentId && (r.status === 'done' || r.status === 'failed')) {
         reloadState(selAgentId)
       }
     })
-    const offAct = window.gt.activity.onEvent(() => {
-      if (selAgentId) reloadState(selAgentId)
-    })
+    // Coalesce the firehose: one trailing state read per burst, not one per event.
+    const offAct = window.gt.activity.onEvent(debouncedReload)
     return () => {
       offStatus()
       offAct()
+      if (timer) clearTimeout(timer)
     }
   }, [selAgentId])
   const toggleExpand = (id: string) => {
