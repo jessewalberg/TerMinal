@@ -64,6 +64,7 @@ import {
   resolvedTemplateRepo,
   enginePath,
   classifyProjectsDir,
+  setRepoHidden,
   type SettingsPatch,
 } from './settings'
 import {
@@ -148,6 +149,7 @@ import {
 import { startCiWebhookServer, stopCiWebhookServer } from './ci-webhook'
 import { readHitl, fileHitl, resolveHitl, removeHitl, type HitlItem } from './hitl'
 import { factoryHealth } from './factory-health'
+import { buildInventory } from './fleet-inventory'
 import { describeSpec, nextRun, type ScheduleSpec } from './cron'
 import { readPersonas } from './personas'
 
@@ -542,6 +544,14 @@ ipcMain.handle('fleet:list', () => {
 // every KNOWN repo (open sessions + scheduled), so "which PRs are ready across
 // everything" has one home. Reuses the 60s-cached mrSummary per repo; fetched
 // on-demand by the Triage tab, not polled (the forge CLI is slow to fan out).
+// Cross-repo fleet inventory: scan the projects dir for git repos and bucket
+// them by last-activity age, so dormant/dead repos that no longer appear in
+// fleet:list (no open session) are still visible. See ticket #14.
+ipcMain.handle('fleet:repos', () => buildInventory())
+ipcMain.handle('fleet:setRepoHidden', (_e, path: string, hidden: boolean) => {
+  setRepoHidden(String(path), !!hidden)
+  return buildInventory()
+})
 ipcMain.handle('fleet:mrs', async () => {
   const roots = new Map<string, string>() // repoRoot → display label
   for (const s of sessions.values()) {

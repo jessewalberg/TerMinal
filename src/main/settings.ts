@@ -66,6 +66,8 @@ export type Settings = {
   /** Per-run wall-clock HARD cap (ms): SIGTERM the run when exceeded (worktree
    *  + commits survive). 0 = off (the default — warn-only). Opt-in only. */
   maxRunHardMs: number
+  /** Repos manually hidden from the fleet inventory (#14). Absolute paths. */
+  hiddenRepos: string[]
 }
 
 // A patch may carry partial nested telegram/engines/apps without losing siblings.
@@ -100,6 +102,7 @@ export function defaultSettings(): Settings {
     templateRepo: '',
     maxRunMs: DEFAULT_SOFT_RUN_MS,
     maxRunHardMs: 0,
+    hiddenRepos: [],
   }
 }
 
@@ -127,6 +130,7 @@ export function migrate(raw: unknown): Settings {
   for (const k of ['maxRunMs', 'maxRunHardMs'] as const) {
     if (typeof r[k] === 'number' && Number.isFinite(r[k]) && r[k] >= 0) s[k] = r[k]
   }
+  if (Array.isArray(r.hiddenRepos)) s.hiddenRepos = r.hiddenRepos.filter((x: unknown) => typeof x === 'string')
   if (ENGINE_IDS.includes(r.defaultEngine)) s.defaultEngine = r.defaultEngine
   if (r.forge === 'auto' || r.forge === 'github' || r.forge === 'gitlab') s.forge = r.forge
   if (r.engines && typeof r.engines === 'object') {
@@ -283,6 +287,17 @@ export function classifyProjectsDir(
     }
   }
   return { ok: true }
+}
+
+/** Toggle a repo's hidden flag in the fleet inventory (#14); returns the new
+ *  list. Array-valued, so this read-modify-write replaces the whole array. */
+export function setRepoHidden(path: string, hidden: boolean): string[] {
+  const cur = new Set(readSettings().hiddenRepos || [])
+  if (hidden) cur.add(path)
+  else cur.delete(path)
+  const next = [...cur]
+  patchSettings({ hiddenRepos: next })
+  return next
 }
 
 // --- resolution: turn '' defaults into concrete paths ------------------------

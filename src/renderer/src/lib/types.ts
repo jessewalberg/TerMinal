@@ -155,6 +155,7 @@ export type Settings = {
   templateRepo: string
   maxRunMs: number // per-run soft wall-clock cap (ms); 0 = off, default 3h
   maxRunHardMs: number // per-run HARD cap (ms): SIGTERM when exceeded; 0 = off
+  hiddenRepos: string[] // repos manually hidden from the fleet inventory (#14)
 }
 export type SettingsPatch = Partial<Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter'>> & {
   telegram?: Partial<TelegramCfg>
@@ -504,6 +505,16 @@ export type FleetMrSummary = {
   changes: number
   needsReview: number
 }
+export type RepoInventory = {
+  name: string
+  path: string
+  lastActivityMs: number
+  ageDays: number // -1 when unknown (no commits)
+  hasSchedule: boolean
+  hidden: boolean
+  bucket: 'active' | 'dormant' | 'dead'
+}
+
 export type FleetSession = {
   key: string
   sessionId: string
@@ -559,6 +570,8 @@ export type GtApi = {
   stopSession: (key: string) => Promise<void>
   fleet: () => Promise<FleetSession[]>
   fleetMrs: () => Promise<FleetMrSummary[]>
+  fleetRepos: () => Promise<RepoInventory[]>
+  setRepoHidden: (path: string, hidden: boolean) => Promise<RepoInventory[]>
   pickDir: () => Promise<string | null>
   projectDirs: () => Promise<{ name: string; path: string }[]>
   detectEnv: () => Promise<EnvDetect>

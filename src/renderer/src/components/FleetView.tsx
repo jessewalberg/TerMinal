@@ -1,7 +1,8 @@
-import { LayoutDashboard, X, Plus, GitBranch } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { LayoutDashboard, X, Plus, GitBranch, EyeOff, Eye, CalendarClock } from 'lucide-react'
 import { Gauge } from './ui'
 import { fmtTokens } from '../lib/format'
-import type { FleetSession } from '../lib/types'
+import type { FleetSession, RepoInventory } from '../lib/types'
 
 const shortModel = (m: string) =>
   m.replace('claude-', '').replace(/-(\d+)-(\d+)/, '-$1.$2').replace(/\[1m\]/, ' 1M')
@@ -52,10 +53,10 @@ export function FleetView({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4">
         {sessions.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-[12px] text-zinc-600">
-            No sessions.
+          <div className="flex items-center justify-center py-10 text-[12px] text-zinc-600">
+            No live sessions.
           </div>
         ) : (
           // Group by repo so the Fleet view matches the workspace mental
@@ -163,6 +164,86 @@ export function FleetView({
             )
           })()
         )}
+        <RepoInventorySection />
+      </div>
+    </div>
+  )
+}
+
+const BUCKET_META: Record<RepoInventory['bucket'], { label: string; dot: string }> = {
+  active: { label: 'Active', dot: 'bg-[var(--gt-green)]' },
+  dormant: { label: 'Dormant', dot: 'bg-[var(--gt-yellow)]' },
+  dead: { label: 'Dead', dot: 'bg-zinc-600' },
+}
+
+// Cross-repo inventory: every git repo under the projects dir, bucketed by
+// last-activity age — surfaces dormant/dead repos that have no live session and
+// so never appear above. Ticket #14. Self-fetches so the parent stays untouched.
+function RepoInventorySection() {
+  const [repos, setRepos] = useState<RepoInventory[]>([])
+  const [showHidden, setShowHidden] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    window.gt.fleetRepos().then((r) => {
+      setRepos(r)
+      setLoaded(true)
+    })
+  }, [])
+
+  const toggleHidden = async (path: string, hidden: boolean) => {
+    setRepos(await window.gt.setRepoHidden(path, hidden))
+  }
+
+  if (!loaded || repos.length === 0) return null
+  const counts = { active: 0, dormant: 0, dead: 0 }
+  for (const r of repos) counts[r.bucket]++
+  const hiddenCount = repos.filter((r) => r.hidden).length
+  const visible = repos.filter((r) => showHidden || !r.hidden)
+
+  return (
+    <div>
+      <div className="mb-2 flex items-baseline gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-400">Repos</span>
+        <span className="text-[10px] tabular-nums text-zinc-600">
+          {counts.active} active · {counts.dormant} dormant · {counts.dead} dead
+        </span>
+        <div className="flex-1" />
+        {hiddenCount > 0 && (
+          <button
+            onClick={() => setShowHidden((v) => !v)}
+            className="inline-flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300"
+          >
+            {showHidden ? <Eye size={11} /> : <EyeOff size={11} />}
+            {showHidden ? 'hide' : `show ${hiddenCount} hidden`}
+          </button>
+        )}
+      </div>
+      <div className="overflow-hidden rounded-xl border border-[var(--gt-border)]">
+        {visible.map((r) => (
+          <div
+            key={r.path}
+            className={`flex items-center gap-2 border-b border-[var(--gt-border)]/50 px-3 py-1.5 last:border-b-0 ${
+              r.hidden ? 'opacity-40' : ''
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${BUCKET_META[r.bucket].dot}`} />
+            <span className="min-w-0 flex-1 truncate text-[12px] text-zinc-200">{r.name}</span>
+            {r.hasSchedule && (
+              <CalendarClock size={11} className="shrink-0 text-[var(--gt-accent-2)]" />
+            )}
+            <span className="shrink-0 text-[10px] tabular-nums text-zinc-600">
+              {r.ageDays < 0 ? 'no commits' : `${r.ageDays}d`}
+            </span>
+            <button
+              onClick={() => toggleHidden(r.path, !r.hidden)}
+              title={r.hidden ? 'Unhide' : 'Hide from inventory'}
+              className="shrink-0 text-zinc-600 hover:text-zinc-300"
+            >
+              {r.hidden ? <Eye size={12} /> : <EyeOff size={12} />}
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   )
