@@ -49,14 +49,27 @@ hits it. They are the runtime counterpart to the reachability check in
   often can't run in the quick `bun test` gate (needs a real browser/display).
   That's an **accepted, ticketed deferral** — track the e2e as its own
   suite/ticket run locally or in a dedicated CI job, and say so; it is *not* an
-  excuse to skip e2e, just to run it outside the unit gate. (Codex runs reviews
-  with `-s danger-full-access` precisely so loopback servers + browsers can
-  launch.)
+  excuse to skip e2e, just to run it outside the unit gate.
+- **`-s danger-full-access` is Codex-specific.** The real Codex review caller
+  passes `-s danger-full-access` to the session so loopback servers and browsers
+  can launch inside the sandbox. If the review runs via the Claude-fallback path
+  (no sandbox, no `-s` flag), e2e suites that need a display or a bound port
+  **may not be runnable**. In that case: (a) skip the e2e run gracefully — do
+  not fail the whole review because of environment limits; (b) record the
+  limitation as a `partial` `test_status` with a note explaining why; and (c)
+  file a follow-up ticket to run the e2e suite in a capable environment (Codex
+  sandbox, local CI, or a dedicated CI job). This is a deferral, not a waiver —
+  the e2e suite must eventually be run and verified.
 - **Run what CI runs.** If CI runs the e2e job, the review's gate should reflect
   it; if e2e is local-only, note that the unit gate is partial and the e2e is a
   separate verification.
 
 ## Test quality (adversarial, not rigged) — reviewer findings
+
+> **Model requirement:** this adversarial judgement requires genuine semantic
+> reasoning. Use **sonnet or better** (not haiku) for the reviewer that runs
+> this section. Haiku-tier models lack the reasoning depth to reliably catch
+> tautological, over-mocked, or regression-blind tests.
 
 A green suite of weak tests is **worse** than no tests — it manufactures false
 confidence. When reviewing, treat these as **testing findings** (medium→high)

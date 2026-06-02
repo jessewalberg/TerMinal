@@ -154,7 +154,7 @@ commit: <full 40-char sha>
 short_sha: <7-char>
 kind: review
 generated: <ISO 8601 datetime>
-generator: <stable id>          # e.g. codex:gpt-5
+generator: <stable id>          # e.g. codex:gpt-5 (primary) or claude:opus / claude:sonnet (fallback). The prefix varies by engine — downstream parsers must NOT assume a "codex:" prefix.
 verdict: approve | request-changes | blocked
 summary: "<one-line headline, <=120 chars — quote it>"
 review_scope: full | mixed | narrow

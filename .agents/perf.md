@@ -73,6 +73,43 @@ status: ok
 ---
 ```
 
+## Model pins
+
+| Tier | Model | When |
+|---|---|---|
+| Tier 1 — hypothesis | `claude-haiku-4-5` | Always (cheap classification) |
+| Tier 2 — fix PR | `claude-sonnet-4-5` | Only when deterministic gate passes |
+| Ceiling | **Never opus** | `$TERMINAL_MODEL` is accepted only if it is not an opus variant; otherwise overridden to sonnet |
+
+The `model` field in `perf.json` is `"sonnet"` — the runner default. The script
+ignores any `TERMINAL_MODEL` that contains `"opus"` for the fix-PR call.
+
+## Fix-PR gate (deterministic — not model judgement)
+
+A fix PR is opened only when **all three** of these conditions are true:
+
+1. **Config opt-in:** `.agents/perf/config.json` contains `"openPrOnRegression": true`.
+2. **Known-pattern match:** the regressing benchmark name matches at least one
+   substring/glob in `.agents/perf/fix-patterns.json` (a JSON string array).
+   This is a deterministic `grep -iF` — no LLM involved.
+3. **PR ceiling not reached:** fewer than `MAX_PR_PER_RUN` (default: **1**) fix
+   PRs have already been opened this agent run.
+
+If any gate fails, the agent skips the PR silently — the ticket filed in tier 1
+remains the durable record.
+
+### Example config files
+
+`.agents/perf/config.json`:
+```json
+{ "threshold": 10, "openPrOnRegression": true }
+```
+
+`.agents/perf/fix-patterns.json`:
+```json
+["fibonacci", "sort-algo", "hot-path"]
+```
+
 ## Hard rules
 
 1. **Single run per invocation** — no retries-to-green. Variance is noted, not
@@ -83,3 +120,5 @@ status: ok
 5. **Idempotent.**
 6. **No-config = no-fail.** If the repo doesn't define benches, log
    `not-configured` and exit cleanly.
+7. **Model ceiling.** The fix-PR call is `sonnet` at most. The script rejects
+   any model string containing `"opus"` and falls back to `claude-sonnet-4-5`.

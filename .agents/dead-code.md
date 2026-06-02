@@ -71,8 +71,22 @@ code — note which is which when the tool can tell.
 code. Do NOT delete here — checks report, humans/PRs act.>
 ```
 
+## Model tier
+
+- **Default: Haiku.** The deterministic scan (knip / ts-prune / vulture / etc.)
+  does the heavy lifting; Haiku is sufficient to format findings into the report
+  body.
+- **Escalate to Sonnet** only when the raw tool output requires grouping across
+  many files or cross-cutting confidence reasoning (e.g., distinguishing
+  reflection-driven false positives from genuine dead code at scale).
+- **Opus: never.** Dead-code reporting does not warrant frontier-model cost.
+
 ## Hard rules
 
+- **Zero findings → no LLM call.** If the deterministic scan reports nothing
+  (all counts are 0 and status is `ok`), write the frontmatter and a one-line
+  summary ("No dead code detected.") and exit — do not invoke any LLM synthesis
+  step.
 - **Report only.** Never delete code or edit source — that's a follow-up PR.
 - **One run per invocation.** No retries.
 - **Confidence matters.** Reflection/dynamic-dispatch/entrypoints often look

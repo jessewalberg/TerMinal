@@ -1,0 +1,10 @@
+{
+  "id": "perf",
+  "title": "Perf auditor",
+  "description": "Runs project benchmarks, compares to baseline, files tickets on regression. Haiku hypothesises culprit; Sonnet drafts opt-in fix PR (ceiling: never opus). Deterministically gated — no-op on repos without a bench script.",
+  "icon": "Gauge",
+  "opensPr": true,
+  "engine": "claude",
+  "model": "sonnet",
+  "inPlace": false
+}

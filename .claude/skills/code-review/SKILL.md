@@ -87,6 +87,11 @@ explicitly asks. Inline reviews lose the standard-reviewer behavior (six-axis,
 test gate, findings.json diff) so are last-resort. If you do, follow
 `.agents/code-review.md` yourself.
 
+**Model pin (fallback only):** When running the review inline in Claude, use
+`claude-opus-*` or `claude-sonnet-*`. **Never use Haiku** — a merge+security gate
+must not run on a small model. Set `generator: claude:opus` or `generator: claude:sonnet`
+in the artifact frontmatter accordingly.
+
 ## Hard rules (override everything in the contract)
 
 1. **Tests must pass.** `test_status != pass` → `verdict: blocked`. No exceptions.

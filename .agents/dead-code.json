@@ -1,0 +1,10 @@
+{
+  "id": "dead-code",
+  "title": "Dead-code scanner",
+  "description": "Detects unused exports, files, and dependencies via knip/ts-prune/vulture/cargo-udeps/deadcode. Reports findings and optionally files tickets. Zero findings = no LLM call. Never deletes source; reports only.",
+  "icon": "FileX2",
+  "opensPr": false,
+  "engine": "claude",
+  "model": "haiku",
+  "inPlace": true
+}

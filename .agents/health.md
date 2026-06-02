@@ -27,7 +27,8 @@ Per probe (each runs independently; one failure doesn't abort the others):
 - **Backlog** — count `backlog/*.md` by `status:` field (`open`, `in-progress`, `stuck`, `closed`).
 - **Dep audit summary** — `bun audit --json` → severity counts (doesn't act, just counts).
 - **Doc links** — every relative link in `docs/**/*.md`, `README.md`, `CLAUDE.md` resolves
-  to a real file in the tree.
+  to a real file in the tree. Lines beginning with `@` (CLAUDE.md `@`-includes) are excluded
+  before scanning to avoid false "broken link" positives.
 - **Repo aliveness** — last commit age, last merged PR age.
 
 ## Early-exit fast path
@@ -55,10 +56,10 @@ published). Reasonable cadence: skip only if `<5 min` since `lastRunAt` AND
      dep audit shows High CVEs, last commit > 30 days.
    - **`healthy`** — none of the above.
 4. **Write artifact** — `reports/health/<short_sha>.md` with the breakdown.
-5. **HITL if unhealthy** — `.claude/bin/hitl "Repo health: unhealthy" "<list of failing probes>"`.
+5. **HITL if unhealthy** — `terminal-cli hitl "Repo health: unhealthy" "<list of failing probes>"`.
    Skip HITL on `degraded` (just emit Activity) to avoid alert fatigue.
 6. **Update state** — `lastScannedSha`, `lastRunAt`, `lastStatus`.
-7. **Activity** — `.claude/bin/activity check "Health · <status> · <N>/N probes ok" "@ <short_sha>"`.
+7. **Activity** — `terminal-cli activity check "Health · <status> · <N>/N probes ok" "@ <short_sha>"`.
 
 ## Output artifact
 

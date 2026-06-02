@@ -1,0 +1,10 @@
+{
+  "id": "drift",
+  "title": "Drift auditor",
+  "description": "Compares what the docs claim against what the code does. Reports findings + files tickets for non-trivial drift.",
+  "icon": "ScanSearch",
+  "opensPr": false,
+  "engine": "claude",
+  "model": "sonnet",
+  "inPlace": false
+}
