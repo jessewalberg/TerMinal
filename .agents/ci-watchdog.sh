@@ -4,8 +4,6 @@
 # TerMinal CI webhook receiver when GitLab reports a failed pipeline.
 set -uo pipefail
 
-CFG="${HOME}/.config/TerMinal/ci-watchdog.json"
-DRYRUN_LOG="${HOME}/.config/TerMinal/ci-watchdog-dryrun.jsonl"
 MAX_FIXES=3
 # v0 allowlist — broaden one class at a time after a week of clean dry-run logs.
 ALLOWED_CLASSES="prettier-formatting"
@@ -15,11 +13,12 @@ if [[ -z "${TERMINAL_REPO:-}" || -z "${CI_PIPELINE_ID:-}" ]]; then
   exit 2
 fi
 
+# Dry-run flag lives in agent state — set via:
+#   terminal-cli state set dryRun false
+_dry_run_val=$(terminal-cli state get dryRun 2>/dev/null || true)
 dry_run=true
-if [[ -f "$CFG" ]]; then
-  if grep -q '"dryRun"[[:space:]]*:[[:space:]]*false' "$CFG" 2>/dev/null; then
-    dry_run=false
-  fi
+if [[ "$_dry_run_val" == "false" ]]; then
+  dry_run=false
 fi
 
 # 1. Fetch the failed pipeline log (GitLab)
@@ -37,18 +36,67 @@ printf '%s' "$log" >"$tmp"
 class=$(terminal-cli classify ci "$tmp" 2>/dev/null || echo ambiguous)
 rm -f "$tmp"
 
+# Known label allowlist — keep in sync with the case statement below.
+_LABEL_ALLOWLIST=(
+  prettier-formatting eslint-fixable typecheck-isolated snapshot-mismatch
+  test-real build-config deploy-infra dependency lockfile-drift flake-network
+  ambiguous
+)
+
+# normalize_llm_class <raw_output>
+# Case-insensitively searches raw LLM output for the first allowlisted token.
+# Prints the matched label, or prints nothing on failure.
+normalize_llm_class() {
+  local raw label
+  raw=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  for label in "${_LABEL_ALLOWLIST[@]}"; do
+    if printf '%s' "$raw" | grep -qF "$label"; then
+      printf '%s' "$label"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Precheck: in dry-run mode, skip the LLM entirely — just record and exit.
+if [[ "$dry_run" == true && "$class" != "ambiguous" ]]; then
+  mr_label="${CI_MR_IID:+!$CI_MR_IID}"
+  would_action="hitl"
+  if [[ " $ALLOWED_CLASSES " == *" $class "* ]]; then
+    would_action="autofix-$class"
+  fi
+  terminal-cli activity check "CI dry-run · $class" \
+    "Pipeline ${CI_PIPELINE_ID}${mr_label:+ · MR $mr_label} · would ${would_action}"
+  exit 0
+fi
+
 if [[ "$class" == "ambiguous" ]] && command -v claude >/dev/null 2>&1; then
-  class=$(
-    claude -p "Classify this CI failure into ONE label: prettier-formatting, eslint-fixable, typecheck-isolated, snapshot-mismatch, test-real, build-config, deploy-infra, ambiguous.
+  _llm_raw=$(
+    claude -p "Classify this CI failure into EXACTLY ONE label from the list below.
+Reply with ONLY the label, nothing else — no punctuation, no explanation.
+
+Labels: prettier-formatting, eslint-fixable, typecheck-isolated, snapshot-mismatch, test-real, build-config, deploy-infra, dependency, lockfile-drift, flake-network, ambiguous
+
+Examples:
+  Input: \"error: Replace \`foo\` with \`bar\`  prettier/prettier\"
+  Output: prettier-formatting
+
+  Input: \"Error: Cannot find module './missing'\"
+  Output: build-config
 
 Log:
 $log" \
-      --dangerously-skip-permissions --model haiku 2>/dev/null | tr -d '\n' || echo ambiguous
+      --dangerously-skip-permissions --model haiku 2>/dev/null || true
   )
+  _matched=$(normalize_llm_class "$_llm_raw" || true)
+  if [[ -n "$_matched" ]]; then
+    class="$_matched"
+  else
+    class=ambiguous
+    terminal-cli activity info "CI watchdog · unparseable LLM classification" \
+      "Haiku replied: $(printf '%s' "$_llm_raw" | head -c 120 | tr -d '\n') — falling back to HITL" 2>/dev/null || true
+  fi
 fi
-
-class=$(echo "$class" | tr -d '[:space:]')
-[[ -z "$class" ]] && class=ambiguous
 
 terminal-cli state set "lastClass-${CI_MR_IID:-none}" "$class" >/dev/null
 
@@ -62,18 +110,10 @@ if [[ " $ALLOWED_CLASSES " == *" $class "* ]]; then
   would_action="autofix-$class"
 fi
 
-record_dryrun() {
-  mkdir -p "$(dirname "$DRYRUN_LOG")"
-  ts=$(($(date +%s) * 1000))
-  printf '{"ts":%s,"repo":"%s","pipeline":"%s","mr":"%s","class":"%s","action":"%s"}\n' \
-    "$ts" "$(basename "$TERMINAL_REPO")" "$CI_PIPELINE_ID" "${CI_MR_IID:-}" "$class" "$would_action" \
-    >>"$DRYRUN_LOG"
+# Post-LLM dry-run exit: class was resolved via LLM — record and stop.
+if [[ "$dry_run" == true ]]; then
   terminal-cli activity check "CI dry-run · $class" \
     "Pipeline ${CI_PIPELINE_ID}${mr_label:+ · MR $mr_label} · would ${would_action}"
-}
-
-if [[ "$dry_run" == true ]]; then
-  record_dryrun
   exit 0
 fi
 
