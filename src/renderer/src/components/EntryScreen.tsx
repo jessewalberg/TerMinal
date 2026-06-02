@@ -300,7 +300,7 @@ export function EntryScreen({
                         {s.gitBranch}
                       </span>
                     )}
-                    <span className="text-zinc-600">· {s.turns} turns</span>
+                    <span className="text-zinc-600">· {s.turns} turn{s.turns === 1 ? '' : 's'}</span>
                   </div>
                 </div>
                 <div className="shrink-0 text-right text-[10.5px] text-zinc-500">

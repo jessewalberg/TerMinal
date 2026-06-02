@@ -3,18 +3,18 @@ import { Layers, Ticket, GitPullRequest, ArrowUpRight, GitBranch } from 'lucide-
 import { Badge } from '../../components/ui'
 import { Markdown } from '../../components/Markdown'
 import { sessionStatusTone } from '../../lib/badges'
+import { fmtAgo } from '../../lib/format'
 import type { Tab, TabContext, ProjectSession } from '../../lib/types'
 
 const STATUSES = ['active', 'closed', 'abandoned']
 
+// Use the canonical, tested formatter so sub-minute timestamps read "just now"
+// instead of "0m ago", consistent with the rest of the app.
 function reldate(iso: string): string {
   if (!iso) return ''
   const t = Date.parse(iso)
   if (isNaN(t)) return iso
-  const s = (Date.now() - t) / 1000
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
+  return fmtAgo(t)
 }
 
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {

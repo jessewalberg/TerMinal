@@ -963,7 +963,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
                     </h3>
                     {!state ? (
                       <div className="rounded-lg border border-dashed border-[var(--gt-border)] p-3 text-center text-[11px] text-zinc-600">
-                        loading…
+                        Loading…
                       </div>
                     ) : !state.exists ? (
                       <div className="rounded-lg border border-dashed border-[var(--gt-border)] p-3 text-[11px] leading-relaxed text-zinc-500">

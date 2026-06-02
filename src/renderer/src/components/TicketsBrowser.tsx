@@ -162,7 +162,7 @@ function NewTicketModal({
               className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-[var(--gt-accent)] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-40"
             >
               {spawning ? <Bot size={13} strokeWidth={2} /> : <EngineLogo engine={spawnEngine} size={13} />}
-              {spawning ? 'Filing...' : 'File ticket'}
+              {spawning ? 'Filing…' : 'File ticket'}
             </button>
           </div>
         </div>

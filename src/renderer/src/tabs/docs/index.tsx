@@ -76,6 +76,7 @@ function DocsTab({ ctx }: { ctx: TabContext }) {
   const [tree, setTree] = useState<DocsTree | null>(null)
   const [selected, setSelected] = useState<DocEntry | null>(null)
   const [body, setBody] = useState('')
+  const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const toggleDir = (key: string) =>
@@ -115,8 +116,13 @@ function DocsTab({ ctx }: { ctx: TabContext }) {
       return
     }
     let alive = true
+    setLoading(true)
+    setBody('')
     window.gt.docs.get(selected.path).then((b) => {
-      if (alive) setBody(b)
+      if (alive) {
+        setBody(b)
+        setLoading(false)
+      }
     })
     localStorage.setItem(categoryStorageKey(ctx.repoRoot), selected.path)
     return () => {
@@ -264,7 +270,13 @@ function DocsTab({ ctx }: { ctx: TabContext }) {
             </header>
             <article className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
               <div className="mx-auto max-w-3xl">
-                {body ? <Markdown>{body}</Markdown> : <div className="text-[12px] text-zinc-600">Loading…</div>}
+                {loading ? (
+                  <div className="text-[12px] text-zinc-600">Loading…</div>
+                ) : body ? (
+                  <Markdown>{body}</Markdown>
+                ) : (
+                  <div className="text-[12px] text-zinc-600">(empty document)</div>
+                )}
               </div>
             </article>
           </>

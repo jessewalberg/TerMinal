@@ -39,7 +39,7 @@ export function PrAgentActions({ pr, sym = '!' }: { pr: PrLite; sym?: string }) 
     <>
       {done ? (
         <span
-          className={`inline-flex items-center gap-1 text-[11px] ${done.ok ? 'text-emerald-400' : 'text-amber-400'}`}
+          className={`inline-flex items-center gap-1 text-[11px] ${done.ok ? 'text-[var(--gt-green)]' : 'text-[var(--gt-yellow)]'}`}
         >
           {done.ok && <Check size={12} strokeWidth={2.5} />}
           {done.msg}
