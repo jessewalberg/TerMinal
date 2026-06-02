@@ -17,6 +17,7 @@ import { emitActivity } from './events'
 import { repoForCwd } from './repo'
 import { forgeFor } from './forge'
 import { getPersona } from './personas'
+import { learningsPreambleFor } from './learnings'
 import { enginePath, engineDefaultModel, resolvedWorktreesDir, readSettings } from './settings'
 import { planWatchdogTimers } from './run-watchdog'
 import { readGlobalAgents, saveGlobalAgent } from './agents-global'
@@ -881,6 +882,7 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
       PATH: `${TERMINAL_BIN_DIR}:${process.env.PATH || ''}`,
       TERMINAL_REPO: repoRoot,
       TERMINAL_RUN_ID: run.id,
+      TERMINAL_RUN_SOURCE: 'agent',
       TERMINAL_AGENT_ID: spec.id,
       TERMINAL_BRANCH: branch,
       TERMINAL_WORKTREE: worktree,
@@ -891,10 +893,16 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
       // parent process (a normal launch of TerMinal never has this var set).
       ...(spec.force ? { TERMINAL_FORCE_MAIN: '1' } : {}),
     }
-    // For prompt-style (non-script) FORCE agents, prepend the preamble so the
-    // spawned model knows it has main-push authority; script-first agents read
-    // the env var directly.
-    const promptForStep = spec.force && !scriptPath ? FORCE_PREAMBLE + step.prompt : step.prompt
+    // For prompt-style (non-script) agents, prepend (1) the FORCE preamble for
+    // force-mode so the spawned model knows it has main-push authority, and
+    // (2) a short "prior gotchas" block from docs/learnings/ so accumulated
+    // learnings push INTO the agent at spawn (#24). Script-first agents read
+    // the env var + their own context directly, so they get neither.
+    let promptForStep = step.prompt
+    if (!scriptPath) {
+      const lead = (spec.force ? FORCE_PREAMBLE : '') + learningsPreambleFor(repoRoot)
+      promptForStep = lead + promptForStep
+    }
     const cmd = scriptPath
       ? shq(scriptPath)
       : buildCmd(spec.engine, worktree, promptForStep, effectiveModel || undefined)
