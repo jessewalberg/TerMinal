@@ -1,15 +1,15 @@
 ---
 id: 34
 title: "Onboarding should reject a projectsDir that is itself a git repo (auto-discovery footgun)"
-status: open
+status: in-progress
 priority: medium
 horizon: now
 hitl: false
 type: dx
 source: session-2026-06-01 (projectsDir misconfig postmortem)
 created: 2026-06-01
-updated: 2026-06-01
-prs: []
+updated: 2026-06-02
+prs: ["https://github.com/jessewalberg/TerMinal/pull/6"]
 refs: []
 depends_on: []
 ---
