@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Hand, Check, Trash2, RotateCcw, ListChecks, Ticket as TicketIcon } from 'lucide-react'
+import { Hand, Check, Trash2, RotateCcw, ListChecks, Repeat, Ticket as TicketIcon } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import type { BadgeTone } from '../../components/ui'
 import { navigateTo } from '../../lib/nav'
+import { groupHitlByRepo } from '../../lib/hitlGrouping'
 import type { Tab, TabContext, HitlItem } from '../../lib/types'
 
 // Derive the Tickets-tab slug (file basename without extension) from a ticket
@@ -84,8 +85,26 @@ function HitlTab(_props: { ctx: TabContext }) {
               : 'Nothing needs you. True human-needs (decisions, approvals, creds, failed cron runs) land here from any repo — and ping Telegram.'}
           </div>
         ) : (
-          <div className="space-y-2">
-            {shown.map((h) => (
+          <div className="space-y-5">
+            {groupHitlByRepo(shown).map((g) => (
+              <div key={g.repoRoot || g.repo || 'none'}>
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-400">
+                    {g.repo}
+                  </span>
+                  <span className="text-[10px] tabular-nums text-zinc-600">{g.items.length}</span>
+                  {g.recurring.length > 0 && (
+                    <span
+                      title={`"${g.recurring[0].title}" recurred ${g.recurring[0].count}×`}
+                      className="inline-flex items-center gap-1 rounded-full border border-[var(--gt-yellow)]/30 bg-[var(--gt-yellow)]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--gt-yellow)]"
+                    >
+                      <Repeat size={10} strokeWidth={2.5} />
+                      {g.recurring[0].count}× recurring
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {g.items.map((h) => (
               <div
                 key={h.id}
                 className={`rounded-xl border bg-[var(--gt-panel)] p-3 ${
@@ -161,6 +180,9 @@ function HitlTab(_props: { ctx: TabContext }) {
                       <Trash2 size={11} strokeWidth={2} />
                     </button>
                   </div>
+                </div>
+              </div>
+                  ))}
                 </div>
               </div>
             ))}

@@ -3,6 +3,7 @@ import { X, FolderOpen, Plus, GitBranch, FolderGit2, SquareTerminal } from 'luci
 import type { SessionEngine, SessionMeta } from '../lib/types'
 import { EngineLogo } from './EngineLogo'
 import { pickDefaultEngine, underDir } from '../lib/pickDefaultEngine'
+import { filterSessions } from '../lib/sessionSearch'
 import logo from '../assets/logo.png'
 
 export type Choice = { mode: 'new' | 'resume'; engine: SessionEngine; sessionId?: string; cwd?: string; name?: string }
@@ -32,6 +33,7 @@ export function EntryScreen({
   const [sessions, setSessions] = useState<SessionMeta[] | null>(null)
   const [cwd, setCwd] = useState(lockedCwd || '') // new-session target
   const [filterDir, setFilterDir] = useState(lockedCwd || '') // resume filter ('' = all)
+  const [query, setQuery] = useState('') // free-text resume search ('' = none)
   const [engine, setEngine] = useState<SessionEngine>('local')
   const [name, setName] = useState('')
   // "new project from template" scaffold form
@@ -83,6 +85,11 @@ export function EntryScreen({
   const all = sessions || []
   const byEngine = all.filter((s) => s.engine === engine)
   const shown = filterDir ? byEngine.filter((s) => underDir(s.cwd, filterDir)) : byEngine
+  // Free-text search over the prompt + cwd + branch. When searching, show ALL
+  // matches (the 300 cap only applies to the unsearched list). See #20.
+  const searching = query.trim().length > 0
+  const matched = filterSessions(shown, query)
+  const visible = searching ? matched : matched.slice(0, 300)
 
   const sel =
     'rounded-lg border border-[var(--gt-border)] bg-black/30 px-3 py-2 text-[12px] text-zinc-200 outline-none focus:border-[var(--gt-accent)]/60'
@@ -262,7 +269,10 @@ export function EntryScreen({
         {/* resume */}
         <div className="mb-2 flex items-center gap-2">
           <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-            Resume {engine}{filterDir ? ` · ${filterDir.split('/').pop()}` : ''} ({shown.length})
+            Resume {engine}{filterDir ? ` · ${filterDir.split('/').pop()}` : ''}
+          </span>
+          <span className="text-[11px] tabular-nums text-zinc-600">
+            showing {visible.length} of {shown.length}
           </span>
           {filterDir && (
             <button
@@ -272,6 +282,14 @@ export function EntryScreen({
               show all
             </button>
           )}
+          <div className="flex-1" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="search prompt / path / branch…"
+            spellCheck={false}
+            className="w-56 rounded-md border border-[var(--gt-border)] bg-black/30 px-2.5 py-1 text-[12px] text-zinc-200 outline-none focus:border-[var(--gt-accent)]/60"
+          />
         </div>
         {sessions === null ? (
           <div className="py-6 text-center text-[12px] text-zinc-600">Scanning sessions…</div>
@@ -279,9 +297,13 @@ export function EntryScreen({
           <div className="rounded-xl border border-dashed border-[var(--gt-border)] p-6 text-center text-[12px] text-zinc-600">
             {filterDir ? 'No sessions for this folder — start a new one above.' : `No prior ${engine} sessions found.`}
           </div>
+        ) : visible.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-[var(--gt-border)] p-6 text-center text-[12px] text-zinc-600">
+            No sessions match “{query.trim()}”.
+          </div>
         ) : (
           <div className="space-y-2">
-            {shown.slice(0, 300).map((s) => (
+            {visible.map((s) => (
               <button
                 key={s.id}
                 onClick={() => onChoose({ mode: 'resume', engine: s.engine, sessionId: s.id, cwd: s.cwd })}
