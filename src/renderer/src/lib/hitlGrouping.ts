@@ -47,15 +47,16 @@ export function groupHitlByRepo(items: HitlItem[]): HitlGroup[] {
   return groups.sort((a, b) => b.items.length - a.items.length)
 }
 
-/** Normalize a HITL title for recurrence matching: lowercase, collapse runs of
- *  digits and hex ids/hashes to placeholders, and squeeze whitespace — so the
- *  same kind of failure recurs under one key even when the title embeds a
- *  per-occurrence id (session id, run uuid, line number). */
+/** Normalize a HITL title for recurrence matching. Mirrors the title portion of
+ *  hitl.ts's `hitlFingerprint` (the main-side dedup) so the renderer's "N×
+ *  recurring" badge agrees with what `fileHitl` already collapses: lowercase,
+ *  drop sha-ish hex blobs (6+) and long numbers (4+), squeeze whitespace, trim.
+ *  Kept in sync intentionally — diverging thresholds undercount recurrence (#21). */
 export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
-    .replace(/\b[0-9a-f]{7,}\b/g, '<id>') // hex ids / hashes / uuid segments
-    .replace(/\b\d{3,}\b/g, '<n>') // long numbers (line nums, counts, ports)
+    .replace(/\b[0-9a-f]{6,}\b/g, '') // sha-ish blobs (matches hitlFingerprint)
+    .replace(/\b\d{4,}\b/g, '') // long numbers (PRs, runs)
     .replace(/\s+/g, ' ')
     .trim()
 }
