@@ -1,15 +1,15 @@
 ---
 id: 16
 title: "workspace:bootstrap clone fallback + partial-adoption detection"
-status: open
+status: in-progress
 priority: medium
 horizon: next
 hitl: false
 type: bug
 source: analysis
 created: 2026-05-31
-updated: 2026-05-31
-prs: []
+updated: 2026-06-02
+prs: ["https://github.com/jessewalberg/TerMinal/pull/9"]
 refs: [ADR-0004]
 ---
 
