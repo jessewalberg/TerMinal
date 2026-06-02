@@ -1,5 +1,17 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveWorkspaceHotkey, cycleIndex } from './hotkeys'
+import { resolveWorkspaceHotkey, cycleIndex, isFindHotkey } from './hotkeys'
+
+describe('isFindHotkey', () => {
+  test('Cmd+F (any case) is the find chord', () => {
+    expect(isFindHotkey({ metaKey: true, key: 'f' })).toBe(true)
+    expect(isFindHotkey({ metaKey: true, key: 'F' })).toBe(true)
+  })
+  test('not without Cmd, not with Ctrl, not other keys', () => {
+    expect(isFindHotkey({ metaKey: false, key: 'f' })).toBe(false)
+    expect(isFindHotkey({ metaKey: true, ctrlKey: true, key: 'f' })).toBe(false)
+    expect(isFindHotkey({ metaKey: true, key: 'g' })).toBe(false)
+  })
+})
 
 const key = (over: Partial<Parameters<typeof resolveWorkspaceHotkey>[0]>) => ({
   metaKey: true,

@@ -23,6 +23,12 @@ export function resolveWorkspaceHotkey(e: KeyLike, count: number): WorkspaceHotk
   return null
 }
 
+/** True for the find chord (Cmd+F, no Ctrl). Used to open the terminal
+ *  scrollback search overlay — ticket #19. */
+export function isFindHotkey(e: { metaKey: boolean; ctrlKey?: boolean; key: string }): boolean {
+  return e.metaKey && !e.ctrlKey && (e.key === 'f' || e.key === 'F')
+}
+
 /** Wrap an index forward/backward within [0, count). Returns -1 when empty. */
 export function cycleIndex(current: number, count: number, dir: 'prev' | 'next'): number {
   if (count === 0) return -1
