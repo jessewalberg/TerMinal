@@ -13,6 +13,23 @@ import { tmpdir } from 'node:os'
 export type TemplateSource = { dir: string; cleanup?: () => void }
 export type TemplatePick = TemplateSource | { error: string }
 
+export type BootstrapStatus = 'full' | 'partial' | 'none'
+export type BootstrapState = { bootstrapped: boolean; status: BootstrapStatus; missing: string[] }
+
+// The factory dirs a fully-wired repo has. A repo with `.agents/` but missing
+// `backlog/`/`sessions/` is "partial" — it renders empty Tickets/Sessions tabs
+// but never got the bootstrap banner (only `.agents/` was checked). See #16.
+export const FACTORY_DIRS = ['.agents', 'backlog', 'sessions'] as const
+
+/** Pure + injectable: classify how wired a repo is for the factory. `has`
+ *  reports whether a given subdir exists (injected so this stays fs-free +
+ *  unit-testable). `bootstrapped` stays true only when fully wired. */
+export function classifyBootstrap(has: (sub: string) => boolean): BootstrapState {
+  const missing = FACTORY_DIRS.filter((d) => !has(d))
+  const status: BootstrapStatus = missing.length === 0 ? 'full' : has('.agents') ? 'partial' : 'none'
+  return { bootstrapped: status === 'full', status, missing }
+}
+
 /** True for `scheme://` URLs (http(s), ssh, git, file). An scp-style remote like
  *  `git@host:org/repo` is NOT a scheme:// URL, so callers treat it as a clone
  *  target rather than a local directory. */

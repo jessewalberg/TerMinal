@@ -5,7 +5,34 @@ import {
   sourceCheckoutRoot,
   templateDirCandidates,
   cloneTemplateToTmp,
+  classifyBootstrap,
 } from './template'
+
+describe('classifyBootstrap', () => {
+  const has = (present: string[]) => (sub: string) => present.includes(sub)
+
+  test('fully wired → full + bootstrapped, nothing missing', () => {
+    expect(classifyBootstrap(has(['.agents', 'backlog', 'sessions']))).toEqual({
+      bootstrapped: true,
+      status: 'full',
+      missing: [],
+    })
+  })
+
+  test('only .agents → partial (empty Tickets/Sessions tabs, needs banner)', () => {
+    const r = classifyBootstrap(has(['.agents']))
+    expect(r.status).toBe('partial')
+    expect(r.bootstrapped).toBe(false)
+    expect(r.missing).toEqual(['backlog', 'sessions'])
+  })
+
+  test('nothing wired → none', () => {
+    const r = classifyBootstrap(has([]))
+    expect(r.status).toBe('none')
+    expect(r.bootstrapped).toBe(false)
+    expect(r.missing).toEqual(['.agents', 'backlog', 'sessions'])
+  })
+})
 
 describe('isTemplateUrl', () => {
   test('true for scheme:// urls', () => {

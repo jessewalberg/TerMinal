@@ -52,6 +52,7 @@ import {
   sourceCheckoutRoot,
   templateDirCandidates,
   cloneTemplateToTmp,
+  classifyBootstrap,
 } from './template'
 import {
   readSettings,
@@ -975,8 +976,10 @@ ipcMain.handle('data:first-prompt', (_e, sessionId: string) => {
 })
 
 ipcMain.handle('workspace:is-bootstrapped', (_e, repoRoot: string) => {
-  if (!repoRoot) return { bootstrapped: true }
-  return { bootstrapped: existsSync(join(repoRoot, '.agents')) }
+  if (!repoRoot) return { bootstrapped: true, status: 'full', missing: [] }
+  // 'partial' = has .agents/ but missing backlog/sessions — renders empty tabs
+  // but previously got no banner (only .agents/ was checked). See #16.
+  return classifyBootstrap((sub) => existsSync(join(repoRoot, sub)))
 })
 // Run project-template/bootstrap.sh against a repo. The script is idempotent
 // and skips clobbering existing files (it writes `<name>.workflow` sidecars
