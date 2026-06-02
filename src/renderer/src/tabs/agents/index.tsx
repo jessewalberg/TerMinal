@@ -51,6 +51,7 @@ import { navigateTo } from '../../lib/nav'
 import type { Tab, TabContext, Agent, AgentRun, Engine } from '../../lib/types'
 import { sanitizeLog as stripAnsi } from '../../lib/sanitizeLog'
 import { seedRunOutput, seedRunOutputs } from './agentRunOutputState'
+import { agentDotState } from './agentDotState'
 
 function fmtRelative(ts: number): string {
   const s = (Date.now() - ts) / 1000
@@ -475,7 +476,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
   // also covers schedule-fired runs. Refresh on activity:event so a freshly
   // finished cron run updates the status dot immediately.
   const [allRuns, setAllRuns] = useState<
-    { id: string; agentId: string; status: string; startedAt: number; endedAt?: number }[]
+    { id: string; agentId: string; status: string; startedAt: number; endedAt?: number; repoRoot: string }[]
   >([])
   // Per-agent week-spend from the AI ledger (#0001). Joined into the
   // Recent-runs header so the operator sees "Sonnet eats $4 this week"
@@ -504,14 +505,19 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
       clearInterval(t)
     }
   }, [])
+  // The rail lists THIS repo's agents, so its run status must come from THIS
+  // repo's runs too — otherwise a same-named agent running in another repo
+  // would colour the dot here. allRuns spans every repo + cron + in-process.
   const lastRunByAgent = useMemo(() => {
+    const here = repoOf(ctx.repoRoot)
     const m = new Map<string, { status: string; startedAt: number }>()
     // allRuns is already startedAt-desc; first hit per agent wins.
     for (const r of allRuns) {
+      if (repoOf(r.repoRoot) !== here) continue
       if (!m.has(r.agentId)) m.set(r.agentId, { status: r.status, startedAt: r.startedAt })
     }
     return m
-  }, [allRuns])
+  }, [allRuns, ctx.repoRoot])
 
   // Per-(repo, agent) state sidecar. Surfaced in the right pane so the
   // operator can see "last scanned X ago" without `cat`-ing the JSON.
@@ -610,10 +616,16 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
 
   const [repoFilter, setRepoFilter] = useState('') // '' = all repos
   const selectedRun = runs.find((r) => r.id === sel) || null
-  const runningByAgent = useMemo(
-    () => new Set(runs.filter((r) => r.status === 'running').map((r) => r.agentId)),
-    [runs],
-  )
+  // Busy = a run in progress for THIS repo. Derived from allRuns (not the
+  // in-process `runs` map) so it also surfaces cron/launchd runs and self-
+  // corrects: allRuns refetches on every activity event + every 30s, and the
+  // main process reaps orphaned 'running' state, so a stuck pulse can't linger.
+  const runningByAgent = useMemo(() => {
+    const here = repoOf(ctx.repoRoot)
+    return new Set(
+      allRuns.filter((r) => r.status === 'running' && repoOf(r.repoRoot) === here).map((r) => r.agentId),
+    )
+  }, [allRuns, ctx.repoRoot])
   // Runs are global across every repo; the filter just narrows the list.
   const repoOptions = useMemo(() => [...new Set(runs.map((r) => repoOf(r.repoRoot)))].sort(), [runs])
   const shownRuns = repoFilter ? runs.filter((r) => repoOf(r.repoRoot) === repoFilter) : runs
@@ -705,20 +717,10 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
                   const on = selAgentId === a.id
                   const busy = runningByAgent.has(a.id)
                   const last = busy ? null : lastRunByAgent.get(a.id) || null
-                  const dot = busy
-                    ? 'bg-[var(--gt-green)] gt-pulse'
-                    : last?.status === 'done'
-                      ? 'bg-[var(--gt-green)]'
-                      : last?.status === 'failed'
-                        ? 'bg-[var(--gt-red)]'
-                        : last
-                          ? 'bg-zinc-500'
-                          : ''
-                  const dotTitle = busy
-                    ? 'run in progress'
-                    : last
-                      ? `last run: ${last.status} · ${fmtRelative(last.startedAt)}`
-                      : ''
+                  const { className: dot, title: dotTitle } = agentDotState({
+                    busy,
+                    last: last ? { status: last.status, relLabel: fmtRelative(last.startedAt) } : null,
+                  })
                   return (
                     <button
                       key={a.id}
