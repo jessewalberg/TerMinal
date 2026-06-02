@@ -35,6 +35,7 @@ const gt = {
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     patch: (patch: unknown) => ipcRenderer.invoke('settings:patch', patch),
+    validateProjectsDir: (dir: string) => ipcRenderer.invoke('settings:validateProjectsDir', dir),
   },
   telegram: {
     test: () => ipcRenderer.invoke('telegram:test'),

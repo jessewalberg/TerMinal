@@ -163,6 +163,12 @@ export type SettingsPatch = Partial<Omit<Settings, 'telegram' | 'engines' | 'app
   openrouter?: Partial<OpenRouterCfg>
 }
 
+/** Result of validating a projectsDir candidate (settings:validateProjectsDir).
+ *  `ok:false` means the chosen dir is itself a git repo, not a parent folder. */
+export type ProjectsDirVerdict =
+  | { ok: true }
+  | { ok: false; reason: 'is-repo'; message: string; suggestedParent: string }
+
 /** Tool/engine readiness probed by the main process (env:detect). */
 export type EnvDetect = {
   codex: { found: boolean; path: string }
@@ -566,6 +572,7 @@ export type GtApi = {
   settings: {
     get: () => Promise<Settings>
     patch: (patch: SettingsPatch) => Promise<Settings>
+    validateProjectsDir: (dir: string) => Promise<ProjectsDirVerdict>
   }
   telegram: {
     test: () => Promise<{ ok: boolean; error?: string }>

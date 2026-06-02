@@ -63,6 +63,7 @@ import {
   resolvedBrowserApp,
   resolvedTemplateRepo,
   enginePath,
+  classifyProjectsDir,
   type SettingsPatch,
 } from './settings'
 import {
@@ -596,6 +597,9 @@ ipcMain.handle('activity:clear', () => clearActivity())
 ipcMain.handle('env:detect', () => detectEnv())
 ipcMain.handle('env:install-gt-notify', () => installGtNotify())
 ipcMain.handle('telegram:test', () => testTelegram())
+ipcMain.handle('settings:validateProjectsDir', (_e, dir: string) =>
+  classifyProjectsDir(String(dir ?? ''), (d) => existsSync(join(d, '.git'))),
+)
 ipcMain.handle('settings:get', () => readSettings())
 ipcMain.handle('settings:patch', (_e, patch: SettingsPatch) => {
   const before = readSettings()
