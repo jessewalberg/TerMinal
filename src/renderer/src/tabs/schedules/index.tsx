@@ -18,6 +18,7 @@ import { EngineModelPicker } from '../../components/EngineModelPicker'
 import { navigateTo } from '../../lib/nav'
 import { BashHighlight } from '../../components/BashHighlight'
 import { SkillHint } from '../../components/SkillHint'
+import { useRepoScope } from '../../lib/useRepoScope'
 import type { BadgeTone } from '../../components/ui'
 import type { Tab, TabContext, Agent, Schedule, ScheduleSpec, CronRun, Engine } from '../../lib/types'
 
@@ -371,7 +372,8 @@ function SchedulesTab({ ctx }: { ctx: TabContext }) {
   const [runs, setRuns] = useState<CronRun[]>([])
   const [log, setLog] = useState<{ runId: string; text: string } | null>(null)
   const [msg, setMsg] = useState('')
-  const [repo, setRepo] = useState('') // '' = all repos
+  // Default to the window's repo; "All repos" opt-out persists. See useRepoScope.
+  const { repo, setRepo, currentRepo } = useRepoScope(ctx.repoRoot, 'schedules.repoFilter')
   // Tick the relative "fires in 12m" labels every minute. The Schedule.nextRun
   // value is already on each record (computed by readSchedules); this just
   // forces the count-down strings to refresh in place.
@@ -424,13 +426,14 @@ function SchedulesTab({ ctx }: { ctx: TabContext }) {
     }
   }, [log?.runId, log?.text, runs])
 
-  // Global view: repo options span every repo that has a schedule. (Run-only
-  // repos previously also appeared here; that's now the Runs tab's job.)
+  // Options span every repo that has a schedule, plus the current repo so the
+  // default filter is always selectable. (Run-only repos appear in the Runs tab.)
   const repoOptions = useMemo(() => {
     const set = new Set<string>()
     for (const s of schedules || []) if (s.repoLabel) set.add(s.repoLabel)
+    if (currentRepo) set.add(currentRepo)
     return [...set].sort()
-  }, [schedules])
+  }, [schedules, currentRepo])
   const shownSchedules = (schedules || []).filter((s) => !repo || s.repoLabel === repo)
 
   const openRuns = async (id: string) => {

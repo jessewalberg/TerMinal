@@ -8,6 +8,7 @@ import type { Tab, TabContext, UnifiedRun } from '../../lib/types'
 import { sanitizeLog as stripAnsi } from '../../lib/sanitizeLog'
 import { findRerunTarget, rerunSuccessMessage, type RerunResult } from './rerunState'
 import { shouldRefreshRunsFallback } from './runRefresh'
+import { useRepoScope } from '../../lib/useRepoScope'
 
 // One global view across every run TerMinal has fired — cron (launchd, via
 // bin/terminal-cron) AND in-process (Run button on Agents/Tickets/PRs). The
@@ -75,11 +76,12 @@ function FilterSelect({
   )
 }
 
-function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
+function RunsTab({ ctx }: { ctx: TabContext }) {
   const [runs, setRuns] = useState<UnifiedRun[] | null>(null)
   const [source, setSource] = useState<'all' | 'cron' | 'agent'>('all')
   const [status, setStatus] = useState<string>('all')
-  const [repo, setRepo] = useState('')
+  // Default to the window's repo; persisted "all repos" opt-out sticks. See useRepoScope.
+  const { repo, setRepo, currentRepo } = useRepoScope(ctx.repoRoot, 'runs.repoFilter')
   const [agentFilter, setAgentFilter] = useState('')
   const [search, setSearch] = useState('')
   const [sel, setSel] = useState<string | null>(null)
@@ -163,10 +165,13 @@ function RunsTab({ ctx: _ctx }: { ctx: TabContext }) {
   )
 
   // Filter chip options derived from loaded data.
+  // Always include the current repo so the default filter is a real option even
+  // before any of its runs have loaded (otherwise the <select> shows a value
+  // with no matching <option> and silently displays the placeholder instead).
   const repoOptions = useMemo(() => {
-    if (!runs) return []
-    return [...new Set(runs.map((r) => r.repoLabel).filter(Boolean))].sort()
-  }, [runs])
+    const labels = (runs || []).map((r) => r.repoLabel)
+    return [...new Set([...labels, currentRepo].filter(Boolean))].sort()
+  }, [runs, currentRepo])
   const agentOptions = useMemo(() => {
     if (!runs) return []
     return [...new Set(runs.map((r) => r.agentId))].sort()

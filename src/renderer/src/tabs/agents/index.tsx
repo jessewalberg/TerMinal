@@ -52,6 +52,7 @@ import type { Tab, TabContext, Agent, AgentRun, Engine } from '../../lib/types'
 import { sanitizeLog as stripAnsi } from '../../lib/sanitizeLog'
 import { seedRunOutput, seedRunOutputs } from './agentRunOutputState'
 import { agentDotState } from './agentDotState'
+import { useRepoScope } from '../../lib/useRepoScope'
 
 function fmtRelative(ts: number): string {
   const s = (Date.now() - ts) / 1000
@@ -614,7 +615,12 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
     }
   }, [ctx.sessionId])
 
-  const [repoFilter, setRepoFilter] = useState('') // '' = all repos
+  // The rail lists this repo's agents, so its Runs panel defaults to this repo
+  // too (the "all repos" opt-out persists). See useRepoScope.
+  const { repo: repoFilter, setRepo: setRepoFilter, currentRepo } = useRepoScope(
+    ctx.repoRoot,
+    'agents.runsRepoFilter',
+  )
   const selectedRun = runs.find((r) => r.id === sel) || null
   // Busy = a run in progress for THIS repo. Derived from allRuns (not the
   // in-process `runs` map) so it also surfaces cron/launchd runs and self-
@@ -627,7 +633,10 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
     )
   }, [allRuns, ctx.repoRoot])
   // Runs are global across every repo; the filter just narrows the list.
-  const repoOptions = useMemo(() => [...new Set(runs.map((r) => repoOf(r.repoRoot)))].sort(), [runs])
+  const repoOptions = useMemo(
+    () => [...new Set([...runs.map((r) => repoOf(r.repoRoot)), currentRepo].filter(Boolean))].sort(),
+    [runs, currentRepo],
+  )
   const shownRuns = repoFilter ? runs.filter((r) => repoOf(r.repoRoot) === repoFilter) : runs
   useEffect(() => {
     const el = logRef.current
@@ -1363,7 +1372,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
           <div className="min-h-0 flex-1 overflow-y-auto border-t border-[var(--gt-border)]">
             <div className="flex items-center gap-2 px-3 py-1.5">
               <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600">Runs</span>
-              <span className="text-[10px] text-zinc-700">all repos</span>
+              <span className="text-[10px] text-zinc-700">{repoFilter || 'all repos'}</span>
               <div className="flex-1" />
               {repoOptions.length > 1 && (
                 <select

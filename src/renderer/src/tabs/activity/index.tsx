@@ -136,7 +136,10 @@ type Scope = 'all' | 'repo' | 'session'
 
 function ActivityTab({ ctx }: { ctx: TabContext }) {
   const [events, setEvents] = useState<ActivityEvent[]>([])
-  const [scope, setScope] = useState<Scope>('all')
+  // Default to this repo's activity (mirrors the Notes tab); the all/repo/session
+  // chips remain the opt-out. A window attached to one repo shouldn't open onto
+  // the whole fleet's event stream by default.
+  const [scope, setScope] = useState<Scope>(ctx.repoRoot ? 'repo' : 'all')
   const [kindFilter, setKindFilter] = useState<string>('all')
   const [query, setQuery] = useState('')
   const [, force] = useState(0) // re-tick relative times
