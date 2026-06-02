@@ -18,6 +18,7 @@ import { SessionView, type Info } from './SessionView'
 import logo from './assets/logo.png'
 import { ALL_TABS } from './tabs/registry'
 import { navigateTo } from './lib/nav'
+import { resolveWorkspaceHotkey, cycleIndex } from './lib/hotkeys'
 import type { Engine, FleetSession, SessionEngine, TabContext } from './lib/types'
 
 const drag = { WebkitAppRegion: 'drag' } as CSSProperties
@@ -329,6 +330,26 @@ export default function App() {
     () => workspaces.find((w) => w.repoRoot === activeWorkspaceRoot)?.sessions ?? [],
     [workspaces, activeWorkspaceRoot],
   )
+
+  // Cmd+1..9 jumps to a workspace (activating its first session); Cmd+Shift+[ ]
+  // cycles. Keyboard quick-switch for the growing top bar — ticket #18.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const hk = resolveWorkspaceHotkey(e, workspaces.length)
+      if (!hk) return
+      e.preventDefault()
+      let idx = -1
+      if (hk.kind === 'select') idx = hk.index
+      else {
+        const cur = workspaces.findIndex((w) => w.repoRoot === activeWorkspaceRoot)
+        idx = cycleIndex(cur < 0 ? 0 : cur, workspaces.length, hk.kind)
+      }
+      const first = workspaces[idx]?.sessions[0]?.key
+      if (first) activate(first)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [workspaces, activeWorkspaceRoot])
   const visibleSessionOrder = useMemo(() => {
     if (!activeKey) return []
     if (terminalLayout === 'single') return [activeKey]
