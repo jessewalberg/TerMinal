@@ -122,7 +122,7 @@ export type ProjectSession = {
 
 export type NewTicket = { title: string; type: string; priority: string; status: string; body: string }
 
-export type DocCategory = 'changelog' | 'maintainer' | 'developer' | 'personal' | 'reports' | 'other'
+export type DocCategory = 'changelog' | 'decisions' | 'maintainer' | 'developer' | 'personal' | 'reports' | 'other'
 export type DocEntry = {
   path: string
   title: string

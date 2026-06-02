@@ -15,7 +15,7 @@ import { join, relative, basename, sep } from 'node:path'
 //   - other       — everything else under docs/**.md (human-authored runbooks,
 //                   ADRs, architecture.md at root, etc.)
 
-export type DocCategory = 'changelog' | 'maintainer' | 'developer' | 'personal' | 'reports' | 'other'
+export type DocCategory = 'changelog' | 'decisions' | 'maintainer' | 'developer' | 'personal' | 'reports' | 'other'
 
 export type DocEntry = {
   path: string // relative to repoRoot, forward slashes
@@ -31,6 +31,7 @@ export type DocsTree = {
 
 const CATEGORY_LABEL: Record<DocCategory, string> = {
   changelog: 'Changelog',
+  decisions: 'Decisions',
   maintainer: 'Maintainer',
   developer: 'Developer',
   personal: 'Personal',
@@ -39,7 +40,7 @@ const CATEGORY_LABEL: Record<DocCategory, string> = {
 }
 
 // Order in the sidebar.
-const CATEGORY_ORDER: DocCategory[] = ['changelog', 'maintainer', 'developer', 'personal', 'reports', 'other']
+const CATEGORY_ORDER: DocCategory[] = ['changelog', 'decisions', 'maintainer', 'developer', 'personal', 'reports', 'other']
 
 const MARKDOWN_RE = /\.(md|mdx|markdown)$/i
 const MANAGED_BY_RE = /<!--\s*managed by:\s*([a-z0-9-]+)/i
@@ -50,9 +51,10 @@ function readTitle(content: string, fallback: string): string {
   return fallback
 }
 
-function categorize(rel: string): DocCategory {
+export function categorize(rel: string): DocCategory {
   const norm = rel.split(sep).join('/')
   if (norm === 'CHANGELOG.md') return 'changelog'
+  if (norm.startsWith('docs/decisions/')) return 'decisions'
   if (norm.startsWith('docs/maintainer/')) return 'maintainer'
   if (norm.startsWith('docs/developer/')) return 'developer'
   if (norm.startsWith('docs/personal/')) return 'personal'

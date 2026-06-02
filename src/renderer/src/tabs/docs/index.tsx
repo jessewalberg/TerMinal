@@ -10,6 +10,7 @@ type TreeNode =
   | { type: 'dir'; key: string; name: string; children: TreeNode[] }
 
 const CATEGORY_PREFIX: Partial<Record<DocCategory, string>> = {
+  decisions: 'docs/decisions/',
   maintainer: 'docs/maintainer/',
   developer: 'docs/developer/',
   personal: 'docs/personal/',
@@ -60,6 +61,7 @@ function buildTree(items: DocEntry[], stripPrefix = ''): TreeNode[] {
 
 const CATEGORY_HINT: Record<DocCategory, string> = {
   changelog: 'maintained by the changelog agent',
+  decisions: 'append-only architecture decision records (ADRs)',
   maintainer: 'maintained by the auto-docs agent — contributor reference',
   developer: 'maintained by the auto-docs agent — public API + integration',
   personal: 'maintained by the auto-docs agent — what shipped + what is in flight',
