@@ -19,6 +19,9 @@ const gt = {
   stopSession: (key: string) => ipcRenderer.invoke('session:stop', key),
   fleet: () => ipcRenderer.invoke('fleet:list'),
   fleetMrs: () => ipcRenderer.invoke('fleet:mrs'),
+  fleetRepos: () => ipcRenderer.invoke('fleet:repos'),
+  setRepoHidden: (path: string, hidden: boolean) =>
+    ipcRenderer.invoke('fleet:setRepoHidden', path, hidden),
   pickDir: () => ipcRenderer.invoke('dialog:pickDir'),
   projectDirs: () => ipcRenderer.invoke('dirs:projects'),
   detectEnv: () => ipcRenderer.invoke('env:detect'),
