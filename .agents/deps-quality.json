@@ -1,0 +1,10 @@
+{
+  "id": "deps-quality",
+  "title": "Deps quality",
+  "description": "Dependency hygiene + security triage: deterministic audit → haiku classifies advisories → sonnet applies safe minor/patch bumps + lint sweep + opens PR. Critical/High CVEs always escalate to HITL immediately — never auto-resolved.",
+  "icon": "ShieldCheck",
+  "opensPr": true,
+  "engine": "claude",
+  "model": "sonnet",
+  "inPlace": false
+}

@@ -1,5 +1,8 @@
 # coverage agent (in-repo contract)
 
+**Implementation:** `.agents/coverage.sh` (new-style script agent). The `.agents/coverage.json`
+sidecar contains the metadata. Run via TerMinal's script runner or trigger manually.
+
 A scheduled agent that finds **test coverage gaps** and **CI flakes**, then
 either opens a PR adding tests (for clear gaps it can confidently fill) or
 files a ticket (for big surfaces / flaky tests needing investigation).
@@ -50,7 +53,7 @@ If `HEAD == lastScannedSha` AND no new CI runs since `lastRunAt` → exit 0.
    push, open PR `test: backfill <N> tests in <area>`.
 7. **Write artifact** to `reports/coverage/<short_sha>.md`.
 8. **Update state** — `lastScannedSha`, `lastCoveragePct`, `flakeCount`.
-9. **Activity** — `.claude/bin/activity check "Coverage · <pct>% (Δ <delta>) · <N> flakes" "@ <short_sha>"`.
+9. **Activity** — `terminal-cli activity check "Coverage · <pct>% (Δ <delta>) · <N> flakes" "@ <short_sha>"`.
 
 ## Output artifact
 
@@ -71,6 +74,31 @@ tickets_filed: [backlog/0125-flake-mr-checker.md]
 status: ok
 ---
 ```
+
+## Cost ladder (implemented in coverage.sh)
+
+The script uses a three-tier cost ladder — never calls an LLM unless deterministic
+checks show real gaps:
+
+| Step | Tool | When |
+|------|------|------|
+| **Precheck** | `git diff`, `bun test --coverage`, baseline JSON diff | Always first. Exits 0 on no new commits or no gaps above threshold. |
+| **Classify** | `claude --model claude-haiku-4-5` | Only when gaps exist. Classifies each gap as `small` or `large`. |
+| **Author** | `claude --model claude-sonnet-4-5` | Only for `small` gaps. Writes net-new test files in the worktree. |
+
+The haiku→sonnet model choice is resolved **inside the script**, not in the sidecar.
+`coverage.json` carries `"model": "sonnet"` as the outer hint; the script overrides
+per-step: haiku for classification, sonnet for authoring.
+
+## Mechanical tests-only guard
+
+After authoring, the script runs `git diff --name-only` on both staged and
+unstaged changes. Any file that does **not** match `test`/`spec`/`__tests__`/
+`_test.`/`.test.`/`.spec.` patterns causes:
+
+1. `git reset --hard HEAD` + `git clean -fd` — revert the worktree completely.
+2. `terminal-cli hitl` — notify the operator with the offending file list.
+3. Skip the PR. Do **not** mark-main (so the next run retries).
 
 ## Hard rules
 

@@ -1,0 +1,10 @@
+{
+  "id": "coverage",
+  "title": "Coverage gaps",
+  "description": "Finds test-coverage gaps vs baseline, classifies them (haiku: small vs large surface), authors net-new tests for small gaps (sonnet, tests-only PR), and files tickets for large ones.",
+  "icon": "TestTubeDiagonal",
+  "opensPr": true,
+  "engine": "claude",
+  "model": "sonnet",
+  "inPlace": false
+}
