@@ -29,7 +29,19 @@ describe('groupHitlByRepo', () => {
       h({ repoRoot: '/p/web', repo: 'web', title: 'Crash-loop · sync' }),
       h({ repoRoot: '/p/web', repo: 'web', title: 'one-off' }),
     ])
-    expect(groups[0].recurring).toEqual([{ title: 'crash-loop · sync', count: 3 }])
+    // display title is the first real occurrence (original casing), not the key
+    expect(groups[0].recurring).toEqual([{ title: 'Crash-loop · sync', count: 3 }])
+  })
+
+  test('recurrence collapses titles that differ only by a transient id/hash', () => {
+    const groups = groupHitlByRepo([
+      h({ repoRoot: '/p/w', repo: 'w', title: 'Wedged · run a1b2c3d4' }),
+      h({ repoRoot: '/p/w', repo: 'w', title: 'Wedged · run e5f6a7b8' }),
+      h({ repoRoot: '/p/w', repo: 'w', title: 'Wedged · run 99887766' }),
+    ])
+    expect(groups[0].recurring).toHaveLength(1)
+    expect(groups[0].recurring[0].count).toBe(3)
+    expect(groups[0].recurring[0].title).toBe('Wedged · run a1b2c3d4')
   })
 
   test('no recurrence when all titles unique', () => {
