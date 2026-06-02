@@ -10,6 +10,12 @@ export type LearningNote = { title: string; summary: string }
 
 const MARKDOWN_RE = /\.(md|mdx|markdown)$/i
 
+/** A real learning doc: markdown, but NOT the directory's README/INDEX, which
+ *  are explainers/scaffold and must not be injected as a "gotcha" (#15). */
+export function isLearningDoc(filename: string): boolean {
+  return MARKDOWN_RE.test(filename) && !/^(readme|index)\.(md|mdx|markdown)$/i.test(filename)
+}
+
 /** Pure: extract a title (first H1, else filename) + one-line summary (first
  *  non-heading, non-frontmatter line) from a learning doc's content. */
 export function parseLearning(content: string, filename: string): LearningNote {
@@ -54,7 +60,7 @@ export function readLearnings(repoRoot: string): LearningNote[] {
   const dir = join(repoRoot, 'docs', 'learnings')
   let files: string[] = []
   try {
-    files = readdirSync(dir).filter((f) => MARKDOWN_RE.test(f)).sort()
+    files = readdirSync(dir).filter(isLearningDoc).sort()
   } catch {
     return []
   }
