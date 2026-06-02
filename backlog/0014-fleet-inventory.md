@@ -1,7 +1,7 @@
 ---
 id: 14
 title: "Cross-repo fleet inventory + retire/archive state"
-status: in-progress
+status: closed
 priority: medium
 horizon: next
 hitl: false
@@ -9,7 +9,7 @@ type: feature
 source: analysis
 created: 2026-05-31
 updated: 2026-06-02
-prs: ["https://github.com/jessewalberg/TerMinal/pull/8"]
+prs: []
 refs: []
 ---
 

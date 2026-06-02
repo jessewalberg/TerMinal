@@ -1,7 +1,7 @@
 ---
 id: 21
 title: "Repo-picker per-repo badges + HITL group-by-repo + recurrence"
-status: in-progress
+status: closed
 priority: medium
 horizon: next
 hitl: false
@@ -9,7 +9,7 @@ type: ux
 source: analysis
 created: 2026-05-31
 updated: 2026-06-02
-prs: ["https://github.com/jessewalberg/TerMinal/pull/14"]
+prs: []
 refs: []
 ---
 
