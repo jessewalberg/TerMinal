@@ -1,5 +1,18 @@
 import { describe, expect, test } from 'bun:test'
-import { parseLearning, buildLearningsPreamble } from './learnings'
+import { parseLearning, buildLearningsPreamble, isLearningDoc } from './learnings'
+
+describe('isLearningDoc', () => {
+  test('accepts real learning markdown', () => {
+    expect(isLearningDoc('0001-esm-dirname.md')).toBe(true)
+    expect(isLearningDoc('some-gotcha.markdown')).toBe(true)
+  })
+  test('rejects README/INDEX explainers and non-markdown (#15)', () => {
+    expect(isLearningDoc('README.md')).toBe(false)
+    expect(isLearningDoc('readme.md')).toBe(false)
+    expect(isLearningDoc('INDEX.md')).toBe(false)
+    expect(isLearningDoc('notes.txt')).toBe(false)
+  })
+})
 
 describe('parseLearning', () => {
   test('takes the H1 as title and the first body line as summary', () => {
