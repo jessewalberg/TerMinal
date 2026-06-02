@@ -16,6 +16,7 @@ import { fileHitl } from './hitl'
 import { emitActivity } from './events'
 
 const CLAUDE_PROJECTS = join(homedir(), '.claude', 'projects')
+const CODEX_SESSIONS = join(homedir(), '.codex', 'sessions')
 const MARKER_FILE = join(homedir(), '.config', 'TerMinal', 'wedged-sessions.json')
 const FRESHNESS_MS = 30 * 60_000
 const TAIL_TURNS = 60
@@ -25,6 +26,7 @@ const RE_NOTIFY_MS = 6 * 60 * 60_000 // don't re-file the same (session, sig) wi
 const RECOVERY_WINDOW_MS = 2 * 60_000
 const READ_BEFORE_WRITE_ERROR = 'File has not been read yet. Read it first before writing to it.'
 const WRITE_TOOL_NAMES = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
+const ERROR_RE = /\b(error|exception|traceback|failed|fatal|enoent|eacces|panic|killed)\b/i
 
 type ErrorTurn = {
   ts: number
@@ -44,11 +46,44 @@ type TranscriptEvent =
 export type WedgedSession = {
   sessionId: string
   cwd: string
+  engine: 'claude' | 'codex'
   signature: string
   preview: string
   repeats: number
   windowMs: number
   lastSeenAt: number
+}
+
+type WedgePart = Pick<WedgedSession, 'signature' | 'preview' | 'repeats' | 'windowMs' | 'lastSeenAt'>
+
+/** Pure: bucket error turns by signature and return every bucket that recurs
+ *  >=REPEAT_FLOOR times inside WINDOW_MS. Shared by the Claude + Codex scans. */
+function findWedges(errs: ErrorTurn[]): WedgePart[] {
+  const out: WedgePart[] = []
+  if (errs.length < REPEAT_FLOOR) return out
+  const bySig = new Map<string, ErrorTurn[]>()
+  for (const e of errs) {
+    const arr = bySig.get(e.signature) || []
+    arr.push(e)
+    bySig.set(e.signature, arr)
+  }
+  for (const [sig, arr] of bySig) {
+    if (arr.length < REPEAT_FLOOR) continue
+    arr.sort((a, b) => a.ts - b.ts)
+    for (let i = 0; i + REPEAT_FLOOR - 1 < arr.length; i++) {
+      if (arr[i + REPEAT_FLOOR - 1].ts - arr[i].ts <= WINDOW_MS) {
+        out.push({
+          signature: sig,
+          preview: arr[0].preview,
+          repeats: arr.length,
+          windowMs: arr[arr.length - 1].ts - arr[0].ts,
+          lastSeenAt: arr[arr.length - 1].ts,
+        })
+        break
+      }
+    }
+  }
+  return out
 }
 
 function readMarker(): Record<string, number> {
@@ -169,9 +204,7 @@ function extractErrorTurns(file: string): ErrorTurn[] {
         text,
         ...info,
       }) - 1
-      const looksLikeError =
-        isError ||
-        /\b(error|exception|traceback|failed|fatal|enoent|eacces|panic|killed)\b/i.test(text.slice(0, 400))
+      const looksLikeError = isError || ERROR_RE.test(text.slice(0, 400))
       if (!looksLikeError) continue
       const norm = normalizeErrorText(text)
       errs.push({
@@ -202,9 +235,8 @@ function sessionCwd(file: string): string {
   return ''
 }
 
-export function detectWedgedSessions(): WedgedSession[] {
+function scanClaude(cutoff: number): WedgedSession[] {
   if (!existsSync(CLAUDE_PROJECTS)) return []
-  const cutoff = Date.now() - FRESHNESS_MS
   const wedged: WedgedSession[] = []
   let projectDirs: string[] = []
   try {
@@ -230,39 +262,132 @@ export function detectWedgedSessions(): WedgedSession[] {
         continue
       }
       if (mtime < cutoff) continue
-      const sessionId = f.replace(/\.jsonl$/, '')
       const errs = extractErrorTurns(file)
-      if (errs.length < REPEAT_FLOOR) continue
-      // Bucket by signature and find any bucket with >=REPEAT_FLOOR within WINDOW_MS
-      const bySig = new Map<string, ErrorTurn[]>()
-      for (const e of errs) {
-        const arr = bySig.get(e.signature) || []
-        arr.push(e)
-        bySig.set(e.signature, arr)
-      }
-      for (const [sig, arr] of bySig) {
-        if (arr.length < REPEAT_FLOOR) continue
-        arr.sort((a, b) => a.ts - b.ts)
-        // Find the first window that contains >=REPEAT_FLOOR
-        for (let i = 0; i + REPEAT_FLOOR - 1 < arr.length; i++) {
-          const span = arr[i + REPEAT_FLOOR - 1].ts - arr[i].ts
-          if (span <= WINDOW_MS) {
-            wedged.push({
-              sessionId,
-              cwd: sessionCwd(file),
-              signature: sig,
-              preview: arr[0].preview,
-              repeats: arr.length,
-              windowMs: arr[arr.length - 1].ts - arr[0].ts,
-              lastSeenAt: arr[arr.length - 1].ts,
-            })
-            break
-          }
-        }
-      }
+      const parts = findWedges(errs)
+      if (!parts.length) continue
+      const sessionId = f.replace(/\.jsonl$/, '')
+      const cwd = sessionCwd(file)
+      for (const part of parts) wedged.push({ sessionId, cwd, engine: 'claude', ...part })
     }
   }
   return wedged
+}
+
+/** Recursively collect .jsonl files under `root` modified at/after `cutoff`.
+ *  Codex nests sessions by date (sessions/YYYY/MM/DD/rollout-*.jsonl). */
+function findRecentJsonl(root: string, cutoff: number, out: string[] = []): string[] {
+  let entries: string[] = []
+  try {
+    entries = readdirSync(root)
+  } catch {
+    return out
+  }
+  for (const e of entries) {
+    const full = join(root, e)
+    let st: ReturnType<typeof statSync>
+    try {
+      st = statSync(full)
+    } catch {
+      continue
+    }
+    if (st.isDirectory()) findRecentJsonl(full, cutoff, out)
+    else if (e.endsWith('.jsonl') && st.mtimeMs >= cutoff) out.push(full)
+  }
+  return out
+}
+
+/** Reduce a codex function_call_output string to its most error-relevant line,
+ *  dropping the "Wall time: …" / "Output:" preamble so the signature keys on the
+ *  actual failure, not the (always-varying) wall-clock line. */
+function codexErrorLine(output: string): string {
+  const lines = output
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !/^wall time:/i.test(l) && l !== 'Output:')
+  const errLine = lines.find((l) => ERROR_RE.test(l.slice(0, 400)))
+  return errLine || lines[0] || output
+}
+
+function extractCodexErrorTurns(file: string): ErrorTurn[] {
+  let raw = ''
+  try {
+    raw = readFileSync(file, 'utf8')
+  } catch {
+    return []
+  }
+  const lines = raw.split('\n').filter((l) => l.trim())
+  // Codex emits far more lines per turn than Claude (reasoning, web_search, …),
+  // so widen the tail to cover a comparable number of tool calls.
+  const tail = lines.slice(-TAIL_TURNS * 8)
+  const errs: ErrorTurn[] = []
+  for (const line of tail) {
+    let obj: any
+    try {
+      obj = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const p = obj.payload
+    if (obj.type !== 'response_item' || p?.type !== 'function_call_output') continue
+    const text = typeof p.output === 'string' ? p.output : contentText(p.output)
+    if (!text || !ERROR_RE.test(text.slice(0, 400))) continue
+    const ts = Date.parse(obj.timestamp || '')
+    const safeTs = Number.isFinite(ts) ? ts : Date.now()
+    const norm = normalizeErrorText(codexErrorLine(text))
+    errs.push({
+      ts: safeTs,
+      signature: norm.signature,
+      preview: norm.preview,
+      eventIndex: errs.length,
+      toolUseId: typeof p.call_id === 'string' ? p.call_id : '',
+    })
+  }
+  return errs
+}
+
+/** Session id + cwd from a codex rollout file (session_meta / turn_context). */
+function codexSessionMeta(file: string): { sessionId: string; cwd: string } {
+  let sessionId = (file.split('/').pop() || '').replace(/\.jsonl$/, '')
+  let cwd = ''
+  try {
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      if (!line.trim()) continue
+      let obj: any
+      try {
+        obj = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const p = obj.payload
+      if (obj.type === 'session_meta' && p) {
+        if (typeof p.id === 'string') sessionId = p.id
+        if (typeof p.cwd === 'string') cwd = p.cwd
+      } else if (obj.type === 'turn_context' && p && !cwd && typeof p.cwd === 'string') {
+        cwd = p.cwd
+      }
+      if (sessionId && cwd) break
+    }
+  } catch {
+    /* best effort */
+  }
+  return { sessionId, cwd }
+}
+
+function scanCodex(cutoff: number): WedgedSession[] {
+  if (!existsSync(CODEX_SESSIONS)) return []
+  const wedged: WedgedSession[] = []
+  for (const file of findRecentJsonl(CODEX_SESSIONS, cutoff)) {
+    const parts = findWedges(extractCodexErrorTurns(file))
+    if (!parts.length) continue
+    const { sessionId, cwd } = codexSessionMeta(file)
+    for (const part of parts) wedged.push({ sessionId, cwd, engine: 'codex', ...part })
+  }
+  return wedged
+}
+
+export function detectWedgedSessions(): WedgedSession[] {
+  const cutoff = Date.now() - FRESHNESS_MS
+  return [...scanClaude(cutoff), ...scanCodex(cutoff)]
 }
 
 export function runWedgedSessionScan(): { detected: number; filed: number } {
@@ -280,6 +405,7 @@ export function runWedgedSessionScan(): { detected: number; filed: number } {
       title: `Session likely wedged · same error ×${w.repeats}`,
       action: 'check the session log',
       detail:
+        `engine: ${w.engine}\n` +
         `session: ${w.sessionId}\n` +
         (w.cwd ? `cwd: ${w.cwd}\n` : '') +
         `repeated error: ${w.preview}\n` +
