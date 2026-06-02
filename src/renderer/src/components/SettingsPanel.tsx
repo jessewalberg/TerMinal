@@ -11,6 +11,8 @@ import {
   ClipboardCopy,
 } from 'lucide-react'
 import type { Settings, SettingsPatch, EnvDetect, Engine, ForgePref } from '../lib/types'
+import { useProjectsDirCheck } from '../lib/useProjectsDirCheck'
+import { ProjectsDirWarning } from './ProjectsDirWarning'
 
 const inp =
   'w-full rounded-lg border border-[var(--gt-border)] bg-black/30 px-3 py-2 text-[12px] text-zinc-200 outline-none focus:border-[var(--gt-accent)]/60'
@@ -326,11 +328,19 @@ export function SettingsPanel({ onClose, onRerunSetup }: { onClose: () => void; 
   const [tg, setTg] = useState<{ busy?: boolean; ok?: boolean; error?: string } | null>(null)
   const [notify, setNotify] = useState<{ busy?: boolean; ok?: boolean; path?: string; error?: string } | null>(null)
   const [copied, setCopied] = useState(false)
+  // Controlled mirror of the projectsDir field so the parent-folder guard
+  // (ticket #34) can validate live as the user types. Synced when settings load.
+  const [pdInput, setPdInput] = useState('')
+  const pdVerdict = useProjectsDirCheck(pdInput)
 
   useEffect(() => {
     window.gt.settings.get().then(setS)
     window.gt.detectEnv().then(setEnv)
   }, [])
+
+  useEffect(() => {
+    if (s) setPdInput(s.projectsDir)
+  }, [s?.projectsDir])
 
   const save = async (patch: SettingsPatch) => setS(await window.gt.settings.patch(patch))
   const appOptions = (detected: string[] | undefined, fallback: string[], current: string) => {
@@ -470,7 +480,8 @@ export function SettingsPanel({ onClose, onRerunSetup }: { onClose: () => void; 
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <input
-                  defaultValue={s.projectsDir}
+                  value={pdInput}
+                  onChange={(e) => setPdInput(e.target.value)}
                   onBlur={(e) => e.target.value !== s.projectsDir && save({ projectsDir: e.target.value.trim() })}
                   placeholder="~ (home) — leave blank to auto-detect"
                   spellCheck={false}
@@ -481,6 +492,13 @@ export function SettingsPanel({ onClose, onRerunSetup }: { onClose: () => void; 
                   Browse
                 </button>
               </div>
+              <ProjectsDirWarning
+                verdict={pdVerdict}
+                onUseParent={(p) => {
+                  setPdInput(p)
+                  save({ projectsDir: p })
+                }}
+              />
               <input
                 defaultValue={s.worktreesDir}
                 onBlur={(e) => e.target.value !== s.worktreesDir && save({ worktreesDir: e.target.value.trim() })}

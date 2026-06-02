@@ -6,6 +6,7 @@ import {
   engineBinaryName,
   sealSecrets,
   openSecrets,
+  classifyProjectsDir,
 } from './settings'
 
 describe('secrets at rest (seal/open)', () => {
@@ -135,6 +136,34 @@ describe('engine parity (cursor)', () => {
       engines: { cursor: { path: '/bin/cursor-agent', defaultModel: 'composer-2.5' } },
     })
     expect(s.engines.cursor).toEqual({ path: '/bin/cursor-agent', defaultModel: 'composer-2.5' })
+  })
+})
+
+describe('classifyProjectsDir', () => {
+  // Injected probe: only this one path "is" a git repo.
+  const isRepo = (d: string) => d === '/Users/me/projects/nerdletters'
+
+  test('a dir that is itself a git repo is rejected with a parent suggestion', () => {
+    const v = classifyProjectsDir('/Users/me/projects/nerdletters', isRepo)
+    expect(v.ok).toBe(false)
+    if (!v.ok) {
+      expect(v.reason).toBe('is-repo')
+      expect(v.suggestedParent).toBe('/Users/me/projects')
+      expect(v.message).toMatch(/parent/i)
+    }
+  })
+
+  test('a parent folder that contains repos (not a repo itself) is accepted', () => {
+    expect(classifyProjectsDir('/Users/me/projects', isRepo)).toEqual({ ok: true })
+  })
+
+  test('blank / whitespace dir is accepted (resolves to home at read time)', () => {
+    expect(classifyProjectsDir('', isRepo)).toEqual({ ok: true })
+    expect(classifyProjectsDir('   ', isRepo)).toEqual({ ok: true })
+  })
+
+  test('trims surrounding whitespace before probing', () => {
+    expect(classifyProjectsDir('  /Users/me/projects/nerdletters  ', isRepo).ok).toBe(false)
   })
 })
 

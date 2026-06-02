@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { FolderOpen, CircleCheck, CircleSlash, ArrowRight, Loader2 } from 'lucide-react'
 import type { EnvDetect } from '../lib/types'
+import { useProjectsDirCheck } from '../lib/useProjectsDirCheck'
+import { ProjectsDirWarning } from './ProjectsDirWarning'
 import logo from '../assets/logo.png'
 
 // First-run welcome. Everything here has a working default, so "skip" is safe —
@@ -25,6 +27,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [env, setEnv] = useState<EnvDetect | null>(null)
   const [projectsDir, setProjectsDir] = useState('')
   const [busy, setBusy] = useState(false)
+  const dirVerdict = useProjectsDirCheck(projectsDir)
 
   useEffect(() => {
     window.gt.detectEnv().then(setEnv)
@@ -105,6 +108,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               className="min-w-0 flex-1 rounded-lg border border-[var(--gt-border)] bg-black/30 px-3 py-2 font-mono text-[12px] text-zinc-200 outline-none focus:border-[var(--gt-accent)]/60"
             />
           </div>
+          <ProjectsDirWarning verdict={dirVerdict} onUseParent={setProjectsDir} />
         </div>
 
         <div className="flex items-center justify-between">

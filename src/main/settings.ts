@@ -253,6 +253,38 @@ export function patchSettings(patch: SettingsPatch): Settings {
   return next
 }
 
+// --- projects-dir validation -------------------------------------------------
+// projectsDir must be the PARENT folder that contains your repos, not a repo
+// itself. Pointing it at a single repo silently breaks discovery: knownRepoRoots
+// scans the dir's children for .git, finds none, and registers nothing — so
+// ticket filing and repo discovery quietly fail. Soft guard: detect + warn; the
+// caller may still override. See ticket #34.
+
+export type ProjectsDirVerdict =
+  | { ok: true }
+  | { ok: false; reason: 'is-repo'; message: string; suggestedParent: string }
+
+/** Pure + injectable: flag a projectsDir that is itself a git repo. `hasGitDir`
+ *  reports whether `<dir>/.git` exists (injected so this stays fs-free + unit-
+ *  testable, mirroring the seal/open crypto injection above). */
+export function classifyProjectsDir(
+  dir: string,
+  hasGitDir: (d: string) => boolean,
+): ProjectsDirVerdict {
+  const trimmed = dir.trim()
+  if (!trimmed) return { ok: true } // '' → resolved to home at read time
+  if (hasGitDir(trimmed)) {
+    return {
+      ok: false,
+      reason: 'is-repo',
+      message:
+        'This looks like a single repo. Pick the parent folder that contains your repos so TerMinal can discover them.',
+      suggestedParent: dirname(trimmed),
+    }
+  }
+  return { ok: true }
+}
+
 // --- resolution: turn '' defaults into concrete paths ------------------------
 
 /** Pure: where worktrees live, given a settings value + a resolved projects dir. */
