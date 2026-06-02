@@ -1,18 +1,24 @@
 ---
 id: 10
 title: "Worktree reaper: agent script + HITL surface (no dashboard panel)"
-status: open
+status: in-progress
 priority: medium
 horizon: next
 hitl: false
 type: feature
 source: research
 created: 2026-05-30
-updated: 2026-05-30
+updated: 2026-06-02
 prs: []
 refs: []
 depends_on: []
 ---
+
+> **Update 2026-06-02:** The core `.agents/worktree-reaper.sh` (+ sidecar)
+> shipped to the `project-template` submodule (`4fa1d94`, direct-to-main on the
+> fork). Deterministic, smoke-tested (stale detection, MIN_STALE gate, `--reap`
+> safety). Remaining (optional): the ~15-line Telegram `/reap` command in
+> `src/main/telegram.ts`, and wiring a daily schedule via `/new-schedule`.
 
 Refactored: this is a `.agents/worktree-reaper.sh` script. No
 dashboard panel, no IPC. When stale worktrees accumulate, the
