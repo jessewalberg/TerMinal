@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseCodexSessionFile, parseCursorMeta, turnStateFromLines } from './data'
+import { contextLimitFor, parseCodexSessionFile, parseCursorMeta, turnStateFromLines } from './data'
 
 describe('turnStateFromLines (fleet "needs-me" detection)', () => {
   const asst = (stop: string, content: unknown) =>
@@ -71,6 +71,30 @@ describe('parseCursorMeta', () => {
   test('returns null on non-JSON / garbage', () => {
     expect(parseCursorMeta('not json')).toBeNull()
     expect(parseCursorMeta('')).toBeNull()
+  })
+})
+
+describe('contextLimitFor (context-window cap)', () => {
+  test('opus 4.8 (a 1M model) maps to the 1M window, not the 200k default', () => {
+    expect(contextLimitFor('claude-opus-4-8', 0)).toBe(1_000_000)
+  })
+  test('dated model ids resolve via prefix match', () => {
+    expect(contextLimitFor('claude-opus-4-8-20260115', 0)).toBe(1_000_000)
+  })
+  test('sonnet 4.6 is 1M', () => {
+    expect(contextLimitFor('claude-sonnet-4-6', 0)).toBe(1_000_000)
+  })
+  test('haiku stays at 200k', () => {
+    expect(contextLimitFor('claude-haiku-4-5', 0)).toBe(200_000)
+  })
+  test('codex gpt-5 family is 400k', () => {
+    expect(contextLimitFor('gpt-5-codex', 0)).toBe(400_000)
+  })
+  test('unknown model falls back to 200k', () => {
+    expect(contextLimitFor('some-future-model', 0)).toBe(200_000)
+  })
+  test('self-corrects upward when usage exceeds the mapped window (never >100%)', () => {
+    expect(contextLimitFor('claude-haiku-4-5', 250_000)).toBe(1_000_000)
   })
 })
 

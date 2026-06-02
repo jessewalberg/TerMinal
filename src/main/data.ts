@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { repoForCwd, repoRootOf } from './repo'
 import { reviewForPrDir, newestReviewDirForRepo } from './review'
+import { lookupPrice } from './ai-pricing'
 
 // ---------------------------------------------------------------------------
 // Claude Code transcript reader
@@ -90,21 +91,12 @@ export type SessionMeta = {
 // opus 4.x blended estimate ($/token). Cache reads are ~10% of input price.
 const PRICE = { input: 15 / 1e6, output: 75 / 1e6, cacheRead: 1.5 / 1e6 }
 
-// Context window per model. Opus 4.6/4.7 and Sonnet 4.5+ run the 1M window;
-// everything else (older Opus, Haiku, Claude 3.x) defaults to 200k.
-function modelContextWindow(model: string): number {
-  const m = model.toLowerCase()
-  if (/\[1m\]|-1m\b/.test(m)) return 1_000_000
-  if (/opus-4-[67]/.test(m)) return 1_000_000
-  if (/sonnet-4-[567]/.test(m)) return 1_000_000
-  return 200_000
-}
-
-function contextLimitFor(model: string, latestContext: number): number {
+export function contextLimitFor(model: string, latestContext: number): number {
   if (process.env.GT_CONTEXT_LIMIT) return Number(process.env.GT_CONTEXT_LIMIT)
-  // start from the model's known window; self-correct upward if a session
-  // somehow carries more than mapped (so we never show >100%).
-  let limit = modelContextWindow(model)
+  // Single source of truth: the per-model registry in ai-pricing.ts (prefix-
+  // matched, so dated ids like '…-4-8-20260115' resolve). Self-correct upward
+  // if a session somehow carries more than mapped, so we never show >100%.
+  let limit = lookupPrice(model).contextWindow
   while (latestContext > limit) limit = limit < 1_000_000 ? 1_000_000 : limit * 2
   return limit
 }
