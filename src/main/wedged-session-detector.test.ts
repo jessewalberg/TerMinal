@@ -85,6 +85,21 @@ describe('detectWedgedSessions — codex sessions', () => {
 
     expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toEqual([])
   })
+
+  test('ignores repeated SUCCESS outputs that merely mention the word error', () => {
+    const id = `codex-success-error-word-${Date.now()}`
+    // A successful tool result that happens to contain "error" in prose — must
+    // NOT be mistaken for a repeated failure (#7 review finding).
+    const ok = 'Wall time: 0.10 seconds\nOutput:\nAll 5 error handlers registered successfully'
+    writeCodexSession([
+      codexMeta('2026-06-01T02:39:00.000Z', id, '/tmp/codexrepo'),
+      codexFnOutput('2026-06-01T02:39:30.000Z', 'a', ok),
+      codexFnOutput('2026-06-01T02:41:00.000Z', 'b', ok),
+      codexFnOutput('2026-06-01T02:43:00.000Z', 'c', ok),
+    ])
+
+    expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toEqual([])
+  })
 })
 
 function writeCodexSession(rows: unknown[]) {

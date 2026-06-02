@@ -27,6 +27,13 @@ const RECOVERY_WINDOW_MS = 2 * 60_000
 const READ_BEFORE_WRITE_ERROR = 'File has not been read yet. Read it first before writing to it.'
 const WRITE_TOOL_NAMES = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 const ERROR_RE = /\b(error|exception|traceback|failed|fatal|enoent|eacces|panic|killed)\b/i
+// Stricter signal for codex function_call_output: a bare "error" substring in a
+// SUCCESS result (e.g. "All error handlers registered") must not count as a
+// failure (#7 review finding). Require a real failure shape: an error keyword at
+// the start of a line, a JSON error field, a 4xx/5xx status, an explicit failure
+// word, or a non-zero exit.
+const CODEX_ERROR_RE =
+  /(^|\n)\s*(error|traceback|exception|fatal|panic)\b|"error"\s*:|"status"\s*:\s*[45]\d\d|\b(failed|enoent|eacces|killed)\b|\bexit code\s*[1-9]/i
 
 type ErrorTurn = {
   ts: number
@@ -304,7 +311,7 @@ function codexErrorLine(output: string): string {
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l && !/^wall time:/i.test(l) && l !== 'Output:')
-  const errLine = lines.find((l) => ERROR_RE.test(l.slice(0, 400)))
+  const errLine = lines.find((l) => CODEX_ERROR_RE.test(l.slice(0, 400)))
   return errLine || lines[0] || output
 }
 
@@ -330,7 +337,7 @@ function extractCodexErrorTurns(file: string): ErrorTurn[] {
     const p = obj.payload
     if (obj.type !== 'response_item' || p?.type !== 'function_call_output') continue
     const text = typeof p.output === 'string' ? p.output : contentText(p.output)
-    if (!text || !ERROR_RE.test(text.slice(0, 400))) continue
+    if (!text || !CODEX_ERROR_RE.test(text.slice(0, 400))) continue
     const ts = Date.parse(obj.timestamp || '')
     const safeTs = Number.isFinite(ts) ? ts : Date.now()
     const norm = normalizeErrorText(codexErrorLine(text))
