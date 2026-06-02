@@ -46,6 +46,10 @@ function BootstrapBanner({ repoRoot, active }: { repoRoot: string; active: boole
     'unknown',
   )
   const [error, setError] = useState('')
+  const [wiring, setWiring] = useState<{ status: 'full' | 'partial' | 'none'; missing: string[] }>({
+    status: 'full',
+    missing: [],
+  })
   const dismissedKey = `gt.bootstrapDismissed.${repoRoot}`
   const dismissed = (() => {
     try {
@@ -59,6 +63,7 @@ function BootstrapBanner({ repoRoot, active }: { repoRoot: string; active: boole
     let cancelled = false
     window.gt.workspace.isBootstrapped(repoRoot).then((r) => {
       if (cancelled) return
+      setWiring({ status: r.status, missing: r.missing })
       setState(r.bootstrapped ? 'ok' : 'needed')
     })
     return () => {
@@ -87,8 +92,15 @@ function BootstrapBanner({ repoRoot, active }: { repoRoot: string; active: boole
         <span className="flex-1 text-[var(--gt-red)]">Bootstrap failed: {error}</span>
       ) : (
         <span className="flex-1">
-          This repo isn't bootstrapped with project-template — agents/skills/backlog/docs are
-          missing.
+          {wiring.status === 'partial' ? (
+            <>
+              This repo is only partially wired (missing{' '}
+              <span className="font-mono">{wiring.missing.join(', ')}</span>) — Tickets/Sessions/
+              Reports tabs stay empty until you bootstrap it.
+            </>
+          ) : (
+            "This repo isn't bootstrapped with project-template — agents/skills/backlog/docs are missing."
+          )}
         </span>
       )}
       <div className="flex items-center gap-1">

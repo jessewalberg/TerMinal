@@ -771,7 +771,9 @@ export type GtApi = {
   openConfigDir: () => Promise<string>
   mcpInstall: () => Promise<{ ok: true; installed: string[] } | { error: string }>
   workspace: {
-    isBootstrapped: (repoRoot: string) => Promise<{ bootstrapped: boolean }>
+    isBootstrapped: (
+      repoRoot: string,
+    ) => Promise<{ bootstrapped: boolean; status: 'full' | 'partial' | 'none'; missing: string[] }>
     bootstrap: (repoRoot: string) => Promise<{ ok: true } | { error: string }>
   }
   release: {
