@@ -86,6 +86,33 @@ describe('detectWedgedSessions — codex sessions', () => {
     expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toEqual([])
   })
 
+  test('ignores repeated code-0 outputs even when the body looks error-shaped', () => {
+    const id = `codex-code0-${Date.now()}`
+    // Real codex envelope: "Process exited with code 0" = success, even if the
+    // output body starts with "error" / contains failure words (#7 follow-up).
+    const ok =
+      'Chunk ID: abc\nWall time: 0.10 seconds\nProcess exited with code 0\nOutput:\nerror handlers registered successfully'
+    writeCodexSession([
+      codexMeta('2026-06-01T02:39:00.000Z', id, '/tmp/codexrepo'),
+      codexFnOutput('2026-06-01T02:39:30.000Z', 'a', ok),
+      codexFnOutput('2026-06-01T02:41:00.000Z', 'b', ok),
+      codexFnOutput('2026-06-01T02:43:00.000Z', 'c', ok),
+    ])
+    expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toEqual([])
+  })
+
+  test('flags repeated NON-zero exit outputs (envelope says failure)', () => {
+    const id = `codex-nonzero-${Date.now()}`
+    const bad = 'Wall time: 0.10 seconds\nProcess exited with code 1\nOutput:\nboom'
+    writeCodexSession([
+      codexMeta('2026-06-01T02:39:00.000Z', id, '/tmp/codexrepo'),
+      codexFnOutput('2026-06-01T02:39:30.000Z', 'a', bad),
+      codexFnOutput('2026-06-01T02:41:00.000Z', 'b', bad),
+      codexFnOutput('2026-06-01T02:43:00.000Z', 'c', bad),
+    ])
+    expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toHaveLength(1)
+  })
+
   test('ignores repeated SUCCESS outputs that merely mention the word error', () => {
     const id = `codex-success-error-word-${Date.now()}`
     // A successful tool result that happens to contain "error" in prose — must

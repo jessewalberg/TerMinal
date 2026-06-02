@@ -315,6 +315,18 @@ function codexErrorLine(output: string): string {
   return errLine || lines[0] || output
 }
 
+/** Decide whether a codex function_call_output is a genuine failure. Codex wraps
+ *  tool output in an execution envelope ("Process exited with code N") — when
+ *  present, TRUST the exit code (code 0 = success even if the body contains
+ *  "error"/"failed"/JSON examples). Only when there is no envelope do we fall
+ *  back to the failure-shape heuristic. Prevents repeated SUCCESS outputs from
+ *  tripping the wedge detector (#9 review follow-up). */
+function codexOutputIsError(text: string): boolean {
+  const exit = text.match(/exited with code\s+(\d+)/i)
+  if (exit) return exit[1] !== '0'
+  return CODEX_ERROR_RE.test(text.slice(0, 400))
+}
+
 function extractCodexErrorTurns(file: string): ErrorTurn[] {
   let raw = ''
   try {
@@ -337,7 +349,7 @@ function extractCodexErrorTurns(file: string): ErrorTurn[] {
     const p = obj.payload
     if (obj.type !== 'response_item' || p?.type !== 'function_call_output') continue
     const text = typeof p.output === 'string' ? p.output : contentText(p.output)
-    if (!text || !CODEX_ERROR_RE.test(text.slice(0, 400))) continue
+    if (!text || !codexOutputIsError(text)) continue
     const ts = Date.parse(obj.timestamp || '')
     const safeTs = Number.isFinite(ts) ? ts : Date.now()
     const norm = normalizeErrorText(codexErrorLine(text))
