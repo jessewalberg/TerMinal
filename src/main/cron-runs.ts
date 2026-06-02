@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync, writeFileSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { homedir } from 'node:os'
 import { listRuns as listAgentRuns, type AgentRun } from './agents'
@@ -23,18 +23,47 @@ export type CronRun = {
   error?: string
 }
 
+// Parsed records cached by filename + mtime. readCronRuns runs on every
+// runs:all call and every cron-run watch push (and inside factoryHealth's 15s
+// poll), and a record is immutable once finalized — so re-parsing every JSON
+// file each call was pure waste. readdir + one stat per file is cheap; the
+// readFile+JSON.parse only happens for files whose mtime actually changed.
+const recCache = new Map<string, { mtime: number; rec: CronRun }>()
 export function readCronRuns(scheduleId?: string, limit = 200): CronRun[] {
   if (!existsSync(RUNS_DIR)) return []
-  const out: CronRun[] = []
-  for (const f of readdirSync(RUNS_DIR)) {
-    if (!f.endsWith('.json')) continue
-    try {
-      const r = JSON.parse(readFileSync(join(RUNS_DIR, f), 'utf8')) as CronRun
-      if (!scheduleId || r.scheduleId === scheduleId) out.push(r)
-    } catch {
-      /* skip */
-    }
+  let files: string[]
+  try {
+    files = readdirSync(RUNS_DIR)
+  } catch {
+    return []
   }
+  const out: CronRun[] = []
+  const seen = new Set<string>()
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue
+    seen.add(f)
+    const full = join(RUNS_DIR, f)
+    let mtime = 0
+    try {
+      mtime = statSync(full).mtimeMs
+    } catch {
+      continue
+    }
+    let rec: CronRun
+    const hit = recCache.get(f)
+    if (hit && hit.mtime === mtime) {
+      rec = hit.rec
+    } else {
+      try {
+        rec = JSON.parse(readFileSync(full, 'utf8')) as CronRun
+      } catch {
+        continue
+      }
+      recCache.set(f, { mtime, rec })
+    }
+    if (!scheduleId || rec.scheduleId === scheduleId) out.push(rec)
+  }
+  for (const k of recCache.keys()) if (!seen.has(k)) recCache.delete(k) // drop deleted files
   return out.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0)).slice(0, limit)
 }
 

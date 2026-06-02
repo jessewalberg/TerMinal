@@ -90,7 +90,22 @@ function walk(root: string, dir: string, out: string[]): void {
   }
 }
 
+// listDocs walks docs/ + reports/ + checks/ and reads every markdown body to
+// extract titles. The Reports tab badge calls it on every gt:tick (sub-second
+// while an agent streams), so a short TTL collapses those bursts into at most
+// one walk per repo per few seconds — staleness a badge can easily tolerate.
+const docsCache = new Map<string, { exp: number; tree: DocsTree }>()
+const DOCS_TTL_MS = 3000
 export function listDocs(repoRoot: string): DocsTree {
+  const now = Date.now()
+  const hit = docsCache.get(repoRoot)
+  if (hit && hit.exp > now) return hit.tree
+  const tree = computeDocs(repoRoot)
+  docsCache.set(repoRoot, { exp: now + DOCS_TTL_MS, tree })
+  return tree
+}
+
+function computeDocs(repoRoot: string): DocsTree {
   const empty: DocsTree = { categories: CATEGORY_ORDER.map((id) => ({ id, label: CATEGORY_LABEL[id], items: [] })) }
   if (!repoRoot || !existsSync(repoRoot)) return empty
   const paths: string[] = []

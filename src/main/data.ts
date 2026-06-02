@@ -138,12 +138,23 @@ function textOf(content: unknown): string {
 }
 
 /** Locate a session's transcript file by id, across all project dirs. */
+// A session's transcript path is stable for its lifetime, but fleet:list
+// resolves it for every open session every 3s. Cache the resolution and
+// validate with a single existsSync, falling back to the directory scan only
+// on a miss — so the steady state is one stat, not readdir + N existsSync.
+const sessionPathCache = new Map<string, string>()
 export function findSessionFile(sessionId: string): string | null {
   if (!sessionId || !existsSync(PROJECTS_DIR)) return null
+  const cached = sessionPathCache.get(sessionId)
+  if (cached && existsSync(cached)) return cached
   for (const project of readdirSync(PROJECTS_DIR)) {
     const p = join(PROJECTS_DIR, project, `${sessionId}.jsonl`)
-    if (existsSync(p)) return p
+    if (existsSync(p)) {
+      sessionPathCache.set(sessionId, p)
+      return p
+    }
   }
+  sessionPathCache.delete(sessionId)
   return null
 }
 
@@ -354,8 +365,13 @@ export function parseTranscriptFile(file: string, sessionId: string): Transcript
  * Stats for the attached session (by id). Cached by file mtime so the several
  * widgets that poll the transcript share one parse and fast polling stays cheap
  * — we only re-parse when the transcript actually grows.
+ *
+ * Keyed by sessionId (not a single slot): fleet:list polls every open session
+ * every 3s, so a one-slot cache thrashed — each poll evicted every other
+ * session and re-read its whole multi-MB transcript. A Map lets N concurrent
+ * sessions each keep a warm entry.
  */
-let tCache: { id: string; mtime: number; stats: TranscriptStats } | null = null
+const tCache = new Map<string, { mtime: number; stats: TranscriptStats }>()
 export function readTranscriptStats(sessionId: string): TranscriptStats {
   const file = sessionId ? findSessionFile(sessionId) : null
   if (!file) return emptyStats(sessionId)
@@ -365,9 +381,10 @@ export function readTranscriptStats(sessionId: string): TranscriptStats {
   } catch {
     return emptyStats(sessionId)
   }
-  if (tCache && tCache.id === sessionId && tCache.mtime === mtime) return tCache.stats
+  const hit = tCache.get(sessionId)
+  if (hit && hit.mtime === mtime) return hit.stats
   const stats = parseTranscriptFile(file, sessionId)
-  tCache = { id: sessionId, mtime, stats }
+  tCache.set(sessionId, { mtime, stats })
   return stats
 }
 
