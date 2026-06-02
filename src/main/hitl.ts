@@ -37,7 +37,7 @@ export type HitlItem = {
   // tab show a "View run" button that jumps to the Runs tab + selects the
   // source run so the operator can read the log that prompted the block.
   runId?: string
-  runSource?: 'cron' | 'agent'
+  runSource?: 'cron' | 'agent' | 'workflow'
   // Path to the auto-filed backlog ticket that pairs with this HITL (cron
   // failures file both — HITL is the "look at me" channel, the ticket is
   // the durable triage record). Lets the HITL tab link straight to the

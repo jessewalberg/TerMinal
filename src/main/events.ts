@@ -113,7 +113,7 @@ export type ActivityEvent = {
   // Pointer back to the originating cron / in-process run, so clicking the
   // event in the Activity tab can jump to that run's log in the Runs tab.
   runId?: string
-  runSource?: 'cron' | 'agent'
+  runSource?: 'cron' | 'agent' | 'workflow'
   // Set when the event is a HITL filing — drives the inline Telegram buttons
   // ([Resolve] / [View run]) so the user can act from the chat without
   // having to text /hitl + /resolve.

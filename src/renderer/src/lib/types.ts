@@ -59,7 +59,7 @@ export type ActivityEvent = {
   sessionId?: string
   ref?: { ticket?: number; pr?: number }
   runId?: string
-  runSource?: 'cron' | 'agent'
+  runSource?: 'cron' | 'agent' | 'workflow'
 }
 
 export type UsageWindow = { pct: number; resetsAt: number | null } | null
@@ -303,7 +303,7 @@ export type HitlItem = {
   createdAt: number
   resolvedAt?: number
   runId?: string
-  runSource?: 'cron' | 'agent'
+  runSource?: 'cron' | 'agent' | 'workflow'
   ticketPath?: string
 }
 export type BgTask = {
@@ -327,7 +327,7 @@ export type BgTask = {
 
 export type UnifiedRun = {
   id: string
-  source: 'cron' | 'agent'
+  source: 'cron' | 'agent' | 'workflow'
   agentId: string
   agentTitle: string
   engine: string
@@ -643,7 +643,7 @@ export type GtApi = {
   } | null>
   agents: {
     allRuns: () => Promise<UnifiedRun[]>
-    runLog: (source: 'cron' | 'agent', runId: string) => Promise<string>
+    runLog: (source: 'cron' | 'agent' | 'workflow', runId: string) => Promise<string>
     list: () => Promise<Agent[]>
     save: (agent: Partial<Agent> & { id: string; title: string; prompt: string }) => Promise<{ ok: true } | { error: string }>
     reset: (id: string) => Promise<{ ok: true } | { error: string }>

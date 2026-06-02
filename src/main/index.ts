@@ -155,6 +155,7 @@ import { describeSpec, nextRun, type ScheduleSpec } from './cron'
 import { readPersonas } from './personas'
 
 const LOGIN_SHELL = process.env.SHELL || '/bin/zsh'
+const TERMINAL_BIN_DIR = join(homedir(), '.config', 'TerMinal', 'bin')
 
 let win: BrowserWindow | null = null
 let cronRunsWatcher: CronRunsWatcher | null = null
@@ -244,12 +245,17 @@ function startSession(key: string, opts: StartOpts) {
     if (opts.name) args.push('--name', opts.name)
   }
 
+  const repoRoot = repoRootOf(cwd)
   const env = {
     ...process.env,
+    PATH: `${TERMINAL_BIN_DIR}:${process.env.PATH || ''}`,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     TERM_PROGRAM: process.env.TERM_PROGRAM || 'TerMinal',
     CLICOLOR: '1',
+    TERMINAL_SESSION_ID: sessionId,
+    TERMINAL_ENGINE: engine,
+    ...(repoRoot ? { TERMINAL_REPO: repoRoot } : {}),
   } as Record<string, string>
   delete env.NO_COLOR
 
@@ -282,8 +288,8 @@ function startSession(key: string, opts: StartOpts) {
     kind: 'session-start',
     title: `${opts.name || basename(cwd) || 'session'} · ${engine} · ${opts.mode === 'resume' ? 'resumed' : 'started'}`,
     detail: cwd.replace(homedir(), '~'),
-    repo: repoForCwd(cwd)?.path || basename(repoRootOf(cwd) || ''),
-    repoRoot: repoRootOf(cwd),
+    repo: repoForCwd(cwd)?.path || basename(repoRoot || ''),
+    repoRoot,
     sessionId,
   })
   return { sessionId, cwd }
@@ -786,8 +792,8 @@ ipcMain.handle('runs:rerun', (_e, run: UnifiedRun) =>
     runAgent,
   }),
 )
-ipcMain.handle('runs:log', (_e, source: 'cron' | 'agent', runId: string) => {
-  if (source === 'cron') return readCronRunLog(runId)
+ipcMain.handle('runs:log', (_e, source: 'cron' | 'agent' | 'workflow', runId: string) => {
+  if (source === 'cron' || source === 'workflow') return readCronRunLog(runId)
   // Prefer the durable log file. In-memory output can be stale if the renderer
   // missed the final stream chunk or the app stayed open across a late flush.
   return readAgentRunLog(runId, listRuns().find((r) => r.id === runId)?.output || '')

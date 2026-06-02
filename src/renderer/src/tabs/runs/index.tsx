@@ -26,7 +26,8 @@ const statusTone = (s: string): BadgeTone =>
           ? 'yellow'
           : 'mute'
 
-const sourceTone = (s: 'cron' | 'agent'): BadgeTone => (s === 'cron' ? 'accent' : 'blue')
+const sourceTone = (s: UnifiedRun['source']): BadgeTone =>
+  s === 'cron' ? 'accent' : s === 'workflow' ? 'yellow' : 'blue'
 
 function fmtWhen(ts?: number): string {
   if (!ts) return '—'
@@ -78,7 +79,7 @@ function FilterSelect({
 
 function RunsTab({ ctx }: { ctx: TabContext }) {
   const [runs, setRuns] = useState<UnifiedRun[] | null>(null)
-  const [source, setSource] = useState<'all' | 'cron' | 'agent'>('all')
+  const [source, setSource] = useState<'all' | UnifiedRun['source']>('all')
   const [status, setStatus] = useState<string>('all')
   // Default to the window's repo; persisted "all repos" opt-out sticks. See useRepoScope.
   const { repo, setRepo, currentRepo } = useRepoScope(ctx.repoRoot, 'runs.repoFilter')
@@ -348,7 +349,7 @@ function RunsTab({ ctx }: { ctx: TabContext }) {
               className="min-w-[140px] flex-1 rounded-md border border-[var(--gt-border)] bg-black/30 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-[var(--gt-accent)]/60 focus:outline-none"
             />
             <div className="flex items-center gap-0.5 rounded-md border border-[var(--gt-border)] p-0.5">
-              {(['all', 'cron', 'agent'] as const).map((s) => (
+              {(['all', 'cron', 'agent', 'workflow'] as const).map((s) => (
                 <button
                   key={s}
                   onClick={() => setSource(s)}
@@ -485,10 +486,12 @@ function RunsTab({ ctx }: { ctx: TabContext }) {
                 )}
               <button
                 onClick={() => handleRerun(selectedRun)}
-                disabled={rerunBusy || selectedRun.status === 'running'}
+                disabled={rerunBusy || selectedRun.status === 'running' || selectedRun.source === 'workflow'}
                 title={
                   selectedRun.status === 'running'
                     ? 'Already running'
+                    : selectedRun.source === 'workflow'
+                      ? 'Terminal-started workflows are re-run from the terminal'
                     : selectedRun.source === 'cron' && selectedRun.scheduleId
                       ? 'Re-run this schedule'
                       : 'Re-run this agent'

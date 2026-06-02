@@ -166,6 +166,7 @@ export function spawnBgTask(input: SpawnBgInput): BgTask | { error: string } {
       TERMINAL_REPO: input.repoRoot,
       TERMINAL_AGENT_ID: 'bg-task',
       TERMINAL_RUN_ID: id,
+      TERMINAL_RUN_SOURCE: 'agent',
       TERMINAL_BRANCH: branch,
       TERMINAL_WORKTREE: worktree,
       TERMINAL_ENGINE: engine,

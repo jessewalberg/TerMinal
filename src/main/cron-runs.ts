@@ -7,18 +7,22 @@ import { listRuns as listAgentRuns, type AgentRun } from './agents'
 const RUNS_DIR = join(homedir(), '.config', 'TerMinal', 'cron-runs')
 const STALE_MS = 2 * 60 * 60 * 1000 // matches terminal-cron's STALE_MS
 
+export type RunSource = 'cron' | 'agent' | 'workflow'
+
 export type CronRun = {
   id: string
+  source?: 'cron' | 'workflow'
   scheduleId: string
   agentId: string
   agentTitle: string
   engine: string
-  status: 'running' | 'done' | 'failed'
+  status: 'running' | 'done' | 'failed' | 'canceled' | 'interrupted'
   startedAt: number
   endedAt?: number
   exitCode?: number
   branch: string
   repoLabel: string
+  repoRoot?: string
   worktree: string
   error?: string
 }
@@ -87,6 +91,9 @@ export function sweepStaleCronRuns(): { swept: number } {
     try {
       const r = JSON.parse(readFileSync(path, 'utf8')) as CronRun & { worktree?: string }
       if (r.status !== 'running') continue
+      // Terminal-started workflows can legitimately run for many hours. They
+      // are finalized by `terminal-cli run finish`, not by the cron stale sweep.
+      if (r.source === 'workflow') continue
       if (now - (r.startedAt || 0) < STALE_MS) continue
       // No process / no worktree match → phantom. Skip the live-process check
       // when we have no worktree (very old records): fall through to sweep.
@@ -124,7 +131,7 @@ export function readCronRunLog(runId: string): string {
 // global picture instead of jumping between Schedules and Agents.
 export type UnifiedRun = {
   id: string
-  source: 'cron' | 'agent'
+  source: RunSource
   agentId: string
   agentTitle: string
   engine: string
@@ -164,10 +171,10 @@ function agentRunToUnified(r: AgentRun): UnifiedRun {
   }
 }
 
-function cronRunToUnified(r: CronRun & { repoRoot?: string }): UnifiedRun {
+export function cronRunToUnified(r: CronRun): UnifiedRun {
   return {
     id: r.id,
-    source: 'cron',
+    source: r.source === 'workflow' ? 'workflow' : 'cron',
     agentId: r.agentId,
     agentTitle: r.agentTitle,
     engine: r.engine,
