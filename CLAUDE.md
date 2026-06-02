@@ -61,10 +61,12 @@ actually uses; an out-of-date binary silently produces stale behavior. (See
 - **No silent narration.** This is a UI app; user-visible messages come from
   the tabs themselves. Don't add `console.log` for "feedback" — wire to the
   Activity feed via `emitActivity` if it's worth surfacing.
-- **Tab order matters.** Lower `order:` numbers come first. The current rough
+- **Tab order matters.** Lower `order:` numbers come first. The current
   ordering is Terminal (0) → Tickets (1) → MRs (2) → Agents (3) → Runs (3.45)
-  → Schedules (3.5) → Browser (4) → HITL (4) → Notes/Files/Activity/Docs
-  → Sessions → Help → Reports.
+  → Schedules (3.5) → CI (3.55) → Factory (3.6) → Reports (3.62) →
+  Triage (3.65) → Browser (3.7) → HITL (4) → Activity (5) → Docs (5.5) →
+  Sessions (6) → Notes (7) → Files (8) → Help (9). Keep `order:` values
+  distinct — equal values fall back to an alphabetical tie-break.
 
 ## Where to read before touching X
 

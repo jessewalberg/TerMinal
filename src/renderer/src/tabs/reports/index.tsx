@@ -323,7 +323,7 @@ const tab: Tab = {
   id: 'reports',
   title: 'Reports',
   icon: ClipboardList,
-  order: 3.6, // right after Schedules — the scheduled-agent output surface
+  order: 3.62, // after Factory (3.6); distinct value avoids the alpha tie-break
   appliesTo: () => true,
   badge: async (gt) => {
     // Surface a red count when any latest-per-kind report is unhealthy/error/fail.
