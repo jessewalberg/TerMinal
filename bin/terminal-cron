@@ -843,7 +843,7 @@ async function runSchedule(id) {
         repoRoot: repo,
         runId,
         agentId: sched.agentId,
-        startedAt: Date.parse(ts),
+        startedAt: ts,
         endedAt,
         exitCode: code,
       })
