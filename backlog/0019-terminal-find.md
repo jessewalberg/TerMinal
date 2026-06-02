@@ -1,15 +1,15 @@
 ---
 id: 19
 title: "In-terminal scrollback find (Cmd+F) + larger scrollback"
-status: open
+status: in-progress
 priority: medium
 horizon: next
 hitl: false
 type: feature
 source: analysis
 created: 2026-05-31
-updated: 2026-05-31
-prs: []
+updated: 2026-06-02
+prs: ["https://github.com/jessewalberg/TerMinal/pull/12"]
 refs: []
 ---
 
