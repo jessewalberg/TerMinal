@@ -1,0 +1,48 @@
+{
+  "pr": "local/TerMinal#7b9a421",
+  "updated_at": "2026-06-03T12:55:54Z",
+  "findings": [
+    {
+      "id": "10236e29",
+      "title": "HTTP 500-class failures still count as wedges",
+      "severity": "medium",
+      "category": "bug",
+      "file": "src/main/wedged-session-detector.ts:37",
+      "confidence": 9,
+      "first_seen_sha": "7b9a421",
+      "first_seen_at": "2026-06-03T12:55:54Z",
+      "status": "open",
+      "status_changed_at": "2026-06-03T12:55:54Z",
+      "status_changed_by": "auto:code-review",
+      "resolved_in_sha": null
+    },
+    {
+      "id": "314d7f21",
+      "title": "Codex attended sessions bypass the human-input gate",
+      "severity": "medium",
+      "category": "bug",
+      "file": "src/main/wedged-session-detector.ts:536",
+      "confidence": 9,
+      "first_seen_sha": "7b9a421",
+      "first_seen_at": "2026-06-03T12:55:54Z",
+      "status": "open",
+      "status_changed_at": "2026-06-03T12:55:54Z",
+      "status_changed_by": "auto:code-review",
+      "resolved_in_sha": null
+    },
+    {
+      "id": "f9ee4bc1",
+      "title": "Fresh edit-conflict tails are deferred forever without a later tool event",
+      "severity": "medium",
+      "category": "bug",
+      "file": "src/main/wedged-session-detector.ts:231",
+      "confidence": 8,
+      "first_seen_sha": "7b9a421",
+      "first_seen_at": "2026-06-03T12:55:54Z",
+      "status": "open",
+      "status_changed_at": "2026-06-03T12:55:54Z",
+      "status_changed_by": "auto:code-review",
+      "resolved_in_sha": null
+    }
+  ]
+}
