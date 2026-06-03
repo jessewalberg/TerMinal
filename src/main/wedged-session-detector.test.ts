@@ -213,7 +213,8 @@ describe('detectWedgedSessions — false-positive hardening', () => {
   })
 
   // F-5: an edit-conflict burst whose recovery has not yet been written to the
-  // transcript (poll lands in the gap) must be DEFERRED, not flagged.
+  // transcript (scan lands in the gap, < RECOVERY_WINDOW_MS after the errors)
+  // must be DEFERRED, not flagged. Inject a scan time just after the burst.
   test('defers an edit-conflict burst whose recovery window has not elapsed', () => {
     const sessionId = `defer-fresh-${Date.now()}`
     writeClaudeSession(sessionId, [
@@ -223,7 +224,44 @@ describe('detectWedgedSessions — false-positive hardening', () => {
       ...unrecoveredReadBeforeWrite(offset(T, 60), 'c', '/tmp/repo/c.ts'),
     ])
 
-    expect(detectWedgedSessions().filter((w) => w.sessionId === sessionId)).toEqual([])
+    const now = Date.parse('2026-06-01T02:40:50.000Z') // < 120s after each error
+    expect(detectWedgedSessions(now).filter((w) => w.sessionId === sessionId)).toEqual([])
+  })
+
+  // F-5 / review finding #3: a transcript that ENDS on the edit-conflict burst
+  // (no later tool event ever arrives) must still be detected once real time
+  // passes the recovery window — not deferred forever against a frozen tail.
+  test('detects an unrecovered edit-conflict tail after the window with no later tool event', () => {
+    const sessionId = `unrecovered-frozen-${Date.now()}`
+    writeClaudeSession(sessionId, [
+      userMessage('2026-06-01T02:39:00.000Z', 'edit'),
+      ...unrecoveredReadBeforeWrite(T, 'a', '/tmp/repo/a.ts'),
+      ...unrecoveredReadBeforeWrite(offset(T, 10), 'b', '/tmp/repo/b.ts'),
+      ...unrecoveredReadBeforeWrite(offset(T, 20), 'c', '/tmp/repo/c.ts'),
+    ])
+
+    const now = Date.parse('2026-06-01T02:45:00.000Z') // > 120s after the last error
+    const wedged = detectWedgedSessions(now).filter((w) => w.sessionId === sessionId)
+    expect(wedged).toHaveLength(1)
+    expect(wedged[0].repeats).toBe(3)
+  })
+
+  // Review finding #1: ALL HTTP 5xx (not just 502-504) are transient, not wedges.
+  test('does not wedge on repeated HTTP 5xx failures (500/501)', () => {
+    for (const code of [500, 501]) {
+      const sessionId = `http-${code}-${Date.now()}`
+      const body = `Exit code 22\n{"error":{"code":${code},"message":"server error"}}`
+      writeClaudeSession(sessionId, [
+        userMessage('2026-06-01T02:39:00.000Z', 'deploy'),
+        bashUse(T, 'a', 'curl --fail https://api.example.com/deploy'),
+        toolResult(offset(T, 1), 'a', body, true),
+        bashUse(offset(T, 2), 'b', 'curl --fail https://api.example.com/deploy'),
+        toolResult(offset(T, 3), 'b', body, true),
+        bashUse(offset(T, 4), 'c', 'curl --fail https://api.example.com/deploy'),
+        toolResult(offset(T, 5), 'c', body, true),
+      ])
+      expect(detectWedgedSessions().filter((w) => w.sessionId === sessionId)).toEqual([])
+    }
   })
 
   // F-6: a session that made successful progress after the repeated error is not
@@ -306,6 +344,21 @@ describe('detectWedgedSessions — codex sessions', () => {
     expect(wedged[0].cwd).toBe('/tmp/codexrepo')
   })
 
+  // Review finding #2: attended-session suppression must apply to Codex too. A
+  // human user_message after the repeated errors means someone is on it.
+  test('does not wedge an attended codex session (user message after errors)', () => {
+    const id = `codex-attended-${Date.now()}`
+    writeCodexSession([
+      codexMeta('2026-06-01T02:39:00.000Z', id, '/tmp/codexrepo'),
+      codexFnOutput('2026-06-01T02:39:30.000Z', 'a', codexErrOutput()),
+      codexFnOutput('2026-06-01T02:41:00.000Z', 'b', codexErrOutput()),
+      codexFnOutput('2026-06-01T02:43:00.000Z', 'c', codexErrOutput()),
+      codexUserMessage('2026-06-01T02:43:30.000Z', 'wait, let me check that'),
+    ])
+
+    expect(detectWedgedSessions().filter((w) => w.sessionId === id)).toEqual([])
+  })
+
   test('ignores a codex session whose outputs are clean', () => {
     const id = `codex-clean-${Date.now()}`
     const ok = 'Wall time: 0.10 seconds\nOutput:\nok'
@@ -375,6 +428,10 @@ function codexMeta(timestamp: string, id: string, cwd: string) {
 
 function codexFnOutput(timestamp: string, callId: string, output: string) {
   return { type: 'response_item', timestamp, payload: { type: 'function_call_output', call_id: callId, output } }
+}
+
+function codexUserMessage(timestamp: string, message: string) {
+  return { type: 'event_msg', timestamp, payload: { type: 'user_message', message } }
 }
 
 // Mirrors a real codex tool error: a "Wall time / Output:" preamble wrapping an

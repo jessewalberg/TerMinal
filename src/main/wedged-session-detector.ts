@@ -35,7 +35,7 @@ const EXIT_CODE_BANNER_RE = /^Exit code \d+$/i
 // wedge. NB: previews are scrubbed (4+ digit runs -> <n>), so match the 3-digit 429
 // and the human phrase rather than relying on long numeric codes surviving.
 const TRANSIENT_FAILURE_RE =
-  /\b(429|502|503|504)\b|too many requests|rate[ -]?limit|\b(ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ECONNREFUSED)\b|socket hang up|network (?:error|timeout)/i
+  /\b(429|5\d\d)\b|too many requests|rate[ -]?limit|\b(ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ECONNREFUSED)\b|socket hang up|network (?:error|timeout)/i
 const DETERMINISTIC_CONFIG_RE =
   /no repo matching|MCP error -|not authenticated|unauthorized|permission denied|\bEACCES\b/i
 // Stricter signal for codex function_call_output: a bare "error" substring in a
@@ -223,16 +223,17 @@ function isTransientOrConfigFailure(error: ErrorTurn): boolean {
   return TRANSIENT_FAILURE_RE.test(error.preview) || DETERMINISTIC_CONFIG_RE.test(error.preview)
 }
 
-/** An edit-conflict whose recovery window has NOT yet elapsed in the captured
- *  data: the transcript is still growing and a re-Read+Edit may land within
- *  RECOVERY_WINDOW_MS. Defer it (don't count) rather than racing the file and
- *  declaring a wedge before the recovery could even be written. Next scan, once
- *  the window has closed in the data, a genuinely unrecovered conflict counts. */
-function isUnconfirmedEditConflict(error: ErrorTurn, events: TranscriptEvent[]): boolean {
+/** An edit-conflict whose recovery window has NOT yet elapsed in real time: a
+ *  re-Read+Edit may still land within RECOVERY_WINDOW_MS, so defer it (don't
+ *  count) rather than racing a still-growing transcript and declaring a wedge
+ *  before the recovery could even be written. Keyed on the scan time (`now`),
+ *  not the last captured event, so a transcript that simply ENDS on the burst
+ *  is re-evaluated on a later scan instead of being deferred forever against a
+ *  frozen tail. Once RECOVERY_WINDOW_MS has passed with no recovery, it counts. */
+function isUnconfirmedEditConflict(error: ErrorTurn, events: TranscriptEvent[], now: number): boolean {
   if (!isRecoverableEditConflict(error)) return false
   if (isRecoveredEditConflictError(error, events)) return false
-  const last = events[events.length - 1]
-  return !!last && last.ts - error.ts < RECOVERY_WINDOW_MS
+  return now - error.ts < RECOVERY_WINDOW_MS
 }
 
 /** Index of the most recent successful tool result in the event stream, or -1. */
@@ -244,7 +245,7 @@ function lastSuccessfulResultIndex(events: TranscriptEvent[]): number {
   return -1
 }
 
-function extractErrorTurns(file: string): ErrorTurn[] {
+function extractErrorTurns(file: string, now: number): ErrorTurn[] {
   let raw = ''
   try {
     raw = readFileSync(file, 'utf8')
@@ -319,7 +320,7 @@ function extractErrorTurns(file: string): ErrorTurn[] {
   return errs.filter(
     (e) =>
       !isRecoveredEditConflictError(e, events) &&
-      !isUnconfirmedEditConflict(e, events) &&
+      !isUnconfirmedEditConflict(e, events, now) &&
       !isSecondaryParallelCancellation(e) &&
       !isTransientOrConfigFailure(e),
   )
@@ -368,7 +369,7 @@ function sessionCwd(file: string): string {
   return ''
 }
 
-function scanClaude(cutoff: number): WedgedSession[] {
+function scanClaude(cutoff: number, now: number): WedgedSession[] {
   if (!existsSync(CLAUDE_PROJECTS)) return []
   const wedged: WedgedSession[] = []
   let projectDirs: string[] = []
@@ -395,7 +396,7 @@ function scanClaude(cutoff: number): WedgedSession[] {
         continue
       }
       if (mtime < cutoff) continue
-      const errs = extractErrorTurns(file)
+      const errs = extractErrorTurns(file, now)
       const parts = findWedges(errs)
       if (!parts.length) continue
       // Skip attended sessions: if a human typed into the REPL after the wedge's
@@ -533,21 +534,58 @@ function codexSessionMeta(file: string): { sessionId: string; cwd: string } {
   return { sessionId, cwd }
 }
 
+/** Latest timestamp of a human turn in a codex rollout, or 0. Codex records user
+ *  input as event_msg rows with payload.type === 'user_message'. Mirrors
+ *  lastHumanInputAt (Claude) so attended codex sessions are skipped too. NB: a
+ *  headless `codex exec` run has only the initial task user_message (before any
+ *  errors), so it stays detectable; an interactive session that types after the
+ *  errors is suppressed. */
+function lastHumanInputAtCodex(file: string): number {
+  let raw = ''
+  try {
+    raw = readFileSync(file, 'utf8')
+  } catch {
+    return 0
+  }
+  let latest = 0
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    let obj: any
+    try {
+      obj = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const p = obj.payload
+    if (obj.type !== 'event_msg' || p?.type !== 'user_message') continue
+    const msg = typeof p.message === 'string' ? p.message : typeof p.text === 'string' ? p.text : ''
+    if (!msg.trim()) continue
+    const ts = Date.parse(obj.timestamp || '')
+    if (Number.isFinite(ts) && ts > latest) latest = ts
+  }
+  return latest
+}
+
 function scanCodex(cutoff: number): WedgedSession[] {
   if (!existsSync(CODEX_SESSIONS)) return []
   const wedged: WedgedSession[] = []
   for (const file of findRecentJsonl(CODEX_SESSIONS, cutoff)) {
     const parts = findWedges(extractCodexErrorTurns(file))
     if (!parts.length) continue
+    // Skip attended codex sessions (human typed after the last error), as in scanClaude.
+    const humanTs = lastHumanInputAtCodex(file)
     const { sessionId, cwd } = codexSessionMeta(file)
-    for (const part of parts) wedged.push({ sessionId, cwd, engine: 'codex', ...part })
+    for (const part of parts) {
+      if (humanTs > part.lastSeenAt) continue
+      wedged.push({ sessionId, cwd, engine: 'codex', ...part })
+    }
   }
   return wedged
 }
 
-export function detectWedgedSessions(): WedgedSession[] {
-  const cutoff = Date.now() - FRESHNESS_MS
-  return [...scanClaude(cutoff), ...scanCodex(cutoff)]
+export function detectWedgedSessions(now: number = Date.now()): WedgedSession[] {
+  const cutoff = now - FRESHNESS_MS
+  return [...scanClaude(cutoff, now), ...scanCodex(cutoff)]
 }
 
 export function runWedgedSessionScan(): { detected: number; filed: number } {
