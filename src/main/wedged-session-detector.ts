@@ -25,8 +25,19 @@ const REPEAT_FLOOR = 3
 const RE_NOTIFY_MS = 6 * 60 * 60_000 // don't re-file the same (session, sig) within 6h
 const RECOVERY_WINDOW_MS = 2 * 60_000
 const READ_BEFORE_WRITE_ERROR = 'File has not been read yet. Read it first before writing to it.'
+const MODIFIED_SINCE_READ_ERROR =
+  'File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.'
 const WRITE_TOOL_NAMES = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
-const ERROR_RE = /\b(error|exception|traceback|failed|fatal|enoent|eacces|panic|killed)\b/i
+const EXIT_CODE_BANNER_RE = /^Exit code \d+$/i
+// Failure classes that are NOT wedges. Transient infra (rate limits, network) and
+// deterministic config/transport errors can't be un-stuck by retrying — the agent
+// backs off or routes around them — so they must not count toward a repeated-error
+// wedge. NB: previews are scrubbed (4+ digit runs -> <n>), so match the 3-digit 429
+// and the human phrase rather than relying on long numeric codes surviving.
+const TRANSIENT_FAILURE_RE =
+  /\b(429|502|503|504)\b|too many requests|rate[ -]?limit|\b(ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ECONNREFUSED)\b|socket hang up|network (?:error|timeout)/i
+const DETERMINISTIC_CONFIG_RE =
+  /no repo matching|MCP error -|not authenticated|unauthorized|permission denied|\bEACCES\b/i
 // Stricter signal for codex function_call_output: a bare "error" substring in a
 // SUCCESS result (e.g. "All error handlers registered") must not count as a
 // failure (#7 review finding). Require a real failure shape: an error keyword at
@@ -43,9 +54,13 @@ type ErrorTurn = {
   toolUseId: string
   toolName?: string
   filePath?: string
+  command?: string
+  // Was there a successful tool result after this error in the captured tail?
+  // If so the session made progress past it and is not stuck (set after parse).
+  successAfter: boolean
 }
 
-type ToolUseInfo = { toolName: string; filePath?: string }
+type ToolUseInfo = { toolName: string; filePath?: string; command?: string }
 type TranscriptEvent =
   | ({ kind: 'tool_use'; ts: number; toolUseId: string } & ToolUseInfo)
   | ({ kind: 'tool_result'; ts: number; toolUseId: string; isError: boolean; text: string } & Partial<ToolUseInfo>)
@@ -77,18 +92,30 @@ function findWedges(errs: ErrorTurn[]): WedgePart[] {
   for (const [sig, arr] of bySig) {
     if (arr.length < REPEAT_FLOOR) continue
     arr.sort((a, b) => a.ts - b.ts)
+    // Liveness gate: a wedge only if the LATEST occurrence of this error is still
+    // unresolved — no successful tool result came after it. A session that hit the
+    // error and then made progress is not stuck, even if it repeated within window.
+    if (arr[arr.length - 1].successAfter) continue
+    // Find the first REPEAT_FLOOR-sized window that fits inside WINDOW_MS …
+    let start = -1
     for (let i = 0; i + REPEAT_FLOOR - 1 < arr.length; i++) {
       if (arr[i + REPEAT_FLOOR - 1].ts - arr[i].ts <= WINDOW_MS) {
-        out.push({
-          signature: sig,
-          preview: arr[0].preview,
-          repeats: arr.length,
-          windowMs: arr[arr.length - 1].ts - arr[0].ts,
-          lastSeenAt: arr[arr.length - 1].ts,
-        })
+        start = i
         break
       }
     }
+    if (start < 0) continue
+    // … then report THAT qualifying cluster (extended to adjacent in-window hits),
+    // not the whole bucket span, so the alert's "×N / window" reflects reality.
+    let end = start + REPEAT_FLOOR - 1
+    while (end + 1 < arr.length && arr[end + 1].ts - arr[start].ts <= WINDOW_MS) end++
+    out.push({
+      signature: sig,
+      preview: arr[start].preview,
+      repeats: end - start + 1,
+      windowMs: arr[end].ts - arr[start].ts,
+      lastSeenAt: arr[end].ts,
+    })
   }
   return out
 }
@@ -111,18 +138,40 @@ function writeMarker(m: Record<string, number>) {
   }
 }
 
-function normalizeErrorText(s: string): { signature: string; preview: string } {
-  const firstLine = (s.split('\n').find((l) => l.trim()) || '').trim()
-  const cleaned = firstLine
+/** The first line that actually describes the failure. Claude's Bash tool prepends
+ *  a generic "Exit code N" banner on every non-zero exit, so unrelated commands
+ *  would otherwise all share that line; skip it and key on the real message. */
+function meaningfulErrorLine(s: string): string {
+  const lines = s
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  return lines.find((l) => !EXIT_CODE_BANNER_RE.test(l)) || lines[0] || ''
+}
+
+function scrubLine(s: string): string {
+  return s
     .replace(/\b\/[\w/.~-]+/g, '<path>')
     .replace(/\b[0-9a-f]{7,40}\b/gi, '<hash>')
     .replace(/\b\d{4,}\b/g, '<n>')
     .replace(/:\d+:\d+/g, ':<lc>')
     .replace(/:\d+\)/g, ':<l>)')
     .replace(/\s+/g, ' ')
+    .trim()
     .slice(0, 240)
-  const signature = createHash('sha1').update(cleaned).digest('hex').slice(0, 12)
-  return { signature, preview: cleaned }
+}
+
+/** Signature keys on the real error line AND the (scrubbed) command, so the SAME
+ *  command failing the SAME way clusters into a wedge while unrelated failures that
+ *  merely share an "Exit code N" banner stay distinct. preview is the human line. */
+function normalizeErrorText(s: string, command?: string): { signature: string; preview: string } {
+  const preview = scrubLine(meaningfulErrorLine(s))
+  const cmdKey = command ? scrubLine(command).slice(0, 120) : ''
+  const signature = createHash('sha1')
+    .update(cmdKey + '\n' + preview)
+    .digest('hex')
+    .slice(0, 12)
+  return { signature, preview }
 }
 
 function contentText(content: unknown): string {
@@ -136,15 +185,20 @@ function contentText(content: unknown): string {
 function toolUseInfo(c: any): ToolUseInfo | null {
   if (c?.type !== 'tool_use' || typeof c.id !== 'string' || typeof c.name !== 'string') return null
   const filePath = typeof c.input?.file_path === 'string' ? c.input.file_path : undefined
-  return { toolName: c.name, filePath }
+  const command = typeof c.input?.command === 'string' ? c.input.command : undefined
+  return { toolName: c.name, filePath, command }
 }
 
 function isWriteTool(toolName?: string): boolean {
   return !!toolName && WRITE_TOOL_NAMES.has(toolName)
 }
 
-function isRecoveredReadBeforeWriteError(error: ErrorTurn, events: TranscriptEvent[]): boolean {
-  if (!error.preview.includes(READ_BEFORE_WRITE_ERROR)) return false
+function isRecoverableEditConflict(error: ErrorTurn): boolean {
+  return error.preview.includes(READ_BEFORE_WRITE_ERROR) || error.preview.includes(MODIFIED_SINCE_READ_ERROR)
+}
+
+function isRecoveredEditConflictError(error: ErrorTurn, events: TranscriptEvent[]): boolean {
+  if (!isRecoverableEditConflict(error)) return false
   if (!error.filePath || !isWriteTool(error.toolName)) return false
 
   let readSucceeded = false
@@ -157,6 +211,37 @@ function isRecoveredReadBeforeWriteError(error: ErrorTurn, events: TranscriptEve
     if (readSucceeded && isWriteTool(event.toolName)) return true
   }
   return false
+}
+
+function isSecondaryParallelCancellation(error: ErrorTurn): boolean {
+  return error.preview.includes('Cancelled: parallel tool call')
+}
+
+/** Transient infra or deterministic config/transport failures — repeating these
+ *  is not a wedge (retrying can't help; the agent backs off or routes around). */
+function isTransientOrConfigFailure(error: ErrorTurn): boolean {
+  return TRANSIENT_FAILURE_RE.test(error.preview) || DETERMINISTIC_CONFIG_RE.test(error.preview)
+}
+
+/** An edit-conflict whose recovery window has NOT yet elapsed in the captured
+ *  data: the transcript is still growing and a re-Read+Edit may land within
+ *  RECOVERY_WINDOW_MS. Defer it (don't count) rather than racing the file and
+ *  declaring a wedge before the recovery could even be written. Next scan, once
+ *  the window has closed in the data, a genuinely unrecovered conflict counts. */
+function isUnconfirmedEditConflict(error: ErrorTurn, events: TranscriptEvent[]): boolean {
+  if (!isRecoverableEditConflict(error)) return false
+  if (isRecoveredEditConflictError(error, events)) return false
+  const last = events[events.length - 1]
+  return !!last && last.ts - error.ts < RECOVERY_WINDOW_MS
+}
+
+/** Index of the most recent successful tool result in the event stream, or -1. */
+function lastSuccessfulResultIndex(events: TranscriptEvent[]): number {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]
+    if (ev.kind === 'tool_result' && !ev.isError) return i
+  }
+  return -1
 }
 
 function extractErrorTurns(file: string): ErrorTurn[] {
@@ -211,9 +296,11 @@ function extractErrorTurns(file: string): ErrorTurn[] {
         text,
         ...info,
       }) - 1
-      const looksLikeError = isError || ERROR_RE.test(text.slice(0, 400))
-      if (!looksLikeError) continue
-      const norm = normalizeErrorText(text)
+      // Only genuine failures (is_error) count. A successful result whose body
+      // merely mentions "error"/"failed" is not a failure — and inspection tools
+      // like Read/Grep routinely quote those words from file contents.
+      if (!isError) continue
+      const norm = normalizeErrorText(text, info?.command)
       errs.push({
         ts: safeTs,
         signature: norm.signature,
@@ -222,10 +309,49 @@ function extractErrorTurns(file: string): ErrorTurn[] {
         toolUseId,
         toolName: info?.toolName,
         filePath: info?.filePath,
+        command: info?.command,
+        successAfter: false,
       })
     }
   }
-  return errs.filter((e) => !isRecoveredReadBeforeWriteError(e, events))
+  const lastSuccessIdx = lastSuccessfulResultIndex(events)
+  for (const e of errs) e.successAfter = e.eventIndex < lastSuccessIdx
+  return errs.filter(
+    (e) =>
+      !isRecoveredEditConflictError(e, events) &&
+      !isUnconfirmedEditConflict(e, events) &&
+      !isSecondaryParallelCancellation(e) &&
+      !isTransientOrConfigFailure(e),
+  )
+}
+
+/** Latest timestamp of a genuine human REPL message in the file, or 0. Real user
+ *  input is a user-role message whose content is a plain string; tool results are
+ *  arrays and skill/system injections are {type:'text'} arrays, so neither counts.
+ *  Used to skip attended sessions — a human typing is already on the problem. */
+function lastHumanInputAt(file: string): number {
+  let raw = ''
+  try {
+    raw = readFileSync(file, 'utf8')
+  } catch {
+    return 0
+  }
+  let latest = 0
+  const lines = raw.split('\n').filter((l) => l.trim())
+  for (const line of lines.slice(-TAIL_TURNS * 4)) {
+    let obj: any
+    try {
+      obj = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (obj.isMeta) continue
+    const msg = obj.message
+    if (!msg || msg.role !== 'user' || typeof msg.content !== 'string' || !msg.content.trim()) continue
+    const ts = typeof obj.timestamp === 'number' ? obj.timestamp : Date.parse(obj.timestamp || '')
+    if (Number.isFinite(ts) && ts > latest) latest = ts
+  }
+  return latest
 }
 
 function sessionCwd(file: string): string {
@@ -272,9 +398,15 @@ function scanClaude(cutoff: number): WedgedSession[] {
       const errs = extractErrorTurns(file)
       const parts = findWedges(errs)
       if (!parts.length) continue
+      // Skip attended sessions: if a human typed into the REPL after the wedge's
+      // last error, someone is already on it — only unattended agents need a HITL.
+      const humanTs = lastHumanInputAt(file)
       const sessionId = f.replace(/\.jsonl$/, '')
       const cwd = sessionCwd(file)
-      for (const part of parts) wedged.push({ sessionId, cwd, engine: 'claude', ...part })
+      for (const part of parts) {
+        if (humanTs > part.lastSeenAt) continue
+        wedged.push({ sessionId, cwd, engine: 'claude', ...part })
+      }
     }
   }
   return wedged
@@ -339,6 +471,8 @@ function extractCodexErrorTurns(file: string): ErrorTurn[] {
   // so widen the tail to cover a comparable number of tool calls.
   const tail = lines.slice(-TAIL_TURNS * 8)
   const errs: ErrorTurn[] = []
+  let outputIdx = -1
+  let lastSuccessIdx = -1
   for (const line of tail) {
     let obj: any
     try {
@@ -349,7 +483,12 @@ function extractCodexErrorTurns(file: string): ErrorTurn[] {
     const p = obj.payload
     if (obj.type !== 'response_item' || p?.type !== 'function_call_output') continue
     const text = typeof p.output === 'string' ? p.output : contentText(p.output)
-    if (!text || !codexOutputIsError(text)) continue
+    if (!text) continue
+    outputIdx++
+    if (!codexOutputIsError(text)) {
+      lastSuccessIdx = outputIdx
+      continue
+    }
     const ts = Date.parse(obj.timestamp || '')
     const safeTs = Number.isFinite(ts) ? ts : Date.now()
     const norm = normalizeErrorText(codexErrorLine(text))
@@ -357,11 +496,13 @@ function extractCodexErrorTurns(file: string): ErrorTurn[] {
       ts: safeTs,
       signature: norm.signature,
       preview: norm.preview,
-      eventIndex: errs.length,
+      eventIndex: outputIdx,
       toolUseId: typeof p.call_id === 'string' ? p.call_id : '',
+      successAfter: false,
     })
   }
-  return errs
+  for (const e of errs) e.successAfter = e.eventIndex < lastSuccessIdx
+  return errs.filter((e) => !isTransientOrConfigFailure(e))
 }
 
 /** Session id + cwd from a codex rollout file (session_meta / turn_context). */
