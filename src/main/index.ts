@@ -40,6 +40,7 @@ import { forgeFor } from './forge'
 import { readNotes, writeNotes, type NotesScope } from './notes'
 import { listDir, readFile, writeFile, searchRepo, createEntry, renameEntry, removeEntry } from './files'
 import { listProjectSessions, getProjectSession, hasSessions as repoHasSessions } from './sessions'
+import { resolveSessionCwd } from './session-cwd'
 import { listDocs, readDoc } from './docs'
 import {
   listDisabled,
@@ -208,7 +209,8 @@ const shq = (s: string) => (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g,
 function startSession(key: string, opts: StartOpts) {
   sessions.get(key)?.pty.kill()
 
-  const cwd = opts.cwd || homedir()
+  const resolvedCwd = resolveSessionCwd(opts.cwd, existsSync, homedir())
+  const cwd = resolvedCwd.cwd
   const engine = opts.engine || 'claude'
   const args: string[] = []
   let sessionId: string
@@ -271,6 +273,14 @@ function startSession(key: string, opts: StartOpts) {
         })
   proc.onData((d) => send('pty:data', key, d))
   proc.onExit(({ exitCode }) => send('pty:exit', key, exitCode))
+  // surface a cwd fallback in the pane itself — the renderer attaches its
+  // pty:data listener before invoking session:start, so this is never missed.
+  if (resolvedCwd.fellBack)
+    send(
+      'pty:data',
+      key,
+      `\x1b[33m── ${resolvedCwd.requested} no longer exists — started in ${cwd.replace(homedir(), '~')} ──\x1b[0m\r\n`,
+    )
 
   sessions.set(key, {
     pty: proc,
