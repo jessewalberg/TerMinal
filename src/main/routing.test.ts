@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import { resolveStepRouting, sameEngineFamily, isHeavyChange } from './routing'
+import { resolveStepRouting, sameEngineFamily, isHeavyChange, stageSkipReason } from './routing'
 import { defaultSettings } from './settings'
 
 const engineDefault = (e: string) => (e === 'claude' ? 'sonnet' : '')
@@ -96,5 +96,91 @@ describe('isHeavyChange', () => {
   test('binary file lines ("-") are tolerated', () => {
     const r = isHeavyChange('-\t-\tassets/icon.png\n5\t2\tsrc/main/util.ts')
     expect(r.heavy).toBe(false)
+  })
+})
+
+describe('stageSkipReason (stage-boundary gates)', () => {
+  const allow = () => ({ decision: 'allow', reason: '' })
+  const refuse = () => ({ decision: 'refuse', reason: 'daily cap reached' })
+
+  test('plain step: proceeds with no note', () => {
+    expect(stageSkipReason({}, { stepEngine: 'codex', numstat: () => null })).toEqual({})
+  })
+
+  test('separation of duties: review/verify on the implementer family is skipped', () => {
+    const r = stageSkipReason(
+      { role: 'review' },
+      { stepEngine: 'claude', codeEngine: 'claude', numstat: () => null },
+    )
+    expect('skip' in r && r.skip).toMatch(/separation of duties/i)
+    const v = stageSkipReason(
+      { role: 'verify' },
+      { stepEngine: 'claude', codeEngine: 'claude', numstat: () => null },
+    )
+    expect('skip' in v && v.skip).toMatch(/separation of duties/i)
+  })
+
+  test('different families pass the separation check', () => {
+    expect(
+      stageSkipReason({ role: 'review' }, { stepEngine: 'codex', codeEngine: 'cursor', numstat: () => null }),
+    ).toEqual({})
+  })
+
+  test('plan/code roles never trip the separation check', () => {
+    expect(
+      stageSkipReason({ role: 'code' }, { stepEngine: 'cursor', codeEngine: 'cursor', numstat: () => null }),
+    ).toEqual({})
+  })
+
+  test('heavy condition: light diff skips, heavy diff proceeds with a note', () => {
+    const light = stageSkipReason(
+      { role: 'verify', condition: 'heavy' },
+      { stepEngine: 'claude', codeEngine: 'cursor', numstat: () => '10\t2\tsrc/x.ts' },
+    )
+    expect('skip' in light && light.skip).toMatch(/not heavy/i)
+    const heavy = stageSkipReason(
+      { role: 'verify', condition: 'heavy' },
+      { stepEngine: 'claude', codeEngine: 'cursor', numstat: () => '3\t0\tsrc/auth/login.ts' },
+    )
+    expect('note' in heavy && heavy.note).toMatch(/heavy/i)
+  })
+
+  test('heavy condition fails safe: unavailable diff runs verify with a note', () => {
+    const r = stageSkipReason(
+      { role: 'verify', condition: 'heavy' },
+      { stepEngine: 'claude', codeEngine: 'cursor', numstat: () => null },
+    )
+    expect('note' in r && r.note).toMatch(/unavailable/i)
+  })
+
+  test('budget refuse skips a verify stage (re-check at the billable boundary)', () => {
+    const r = stageSkipReason(
+      { role: 'verify' },
+      { stepEngine: 'claude', codeEngine: 'cursor', numstat: () => null, budgetGate: refuse },
+    )
+    expect('skip' in r && r.skip).toMatch(/budget/i)
+    expect(
+      stageSkipReason(
+        { role: 'verify' },
+        { stepEngine: 'claude', codeEngine: 'cursor', numstat: () => null, budgetGate: allow },
+      ),
+    ).toEqual({})
+  })
+
+  test('separation beats heavy: same-family verify skips before computing the diff', () => {
+    let diffComputed = false
+    const r = stageSkipReason(
+      { role: 'verify', condition: 'heavy' },
+      {
+        stepEngine: 'claude',
+        codeEngine: 'claude',
+        numstat: () => {
+          diffComputed = true
+          return '3\t0\tsrc/auth/login.ts'
+        },
+      },
+    )
+    expect('skip' in r && r.skip).toMatch(/separation/i)
+    expect(diffComputed).toBe(false)
   })
 })

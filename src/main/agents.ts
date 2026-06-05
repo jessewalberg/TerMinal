@@ -18,12 +18,19 @@ import { repoForCwd } from './repo'
 import { forgeFor } from './forge'
 import { getPersona } from './personas'
 import { learningsPreambleFor } from './learnings'
-import { enginePath, engineDefaultModel, resolvedWorktreesDir, readSettings } from './settings'
-import { resolveStepRouting, type StepRouting } from './routing'
+import {
+  enginePath,
+  engineDefaultModel,
+  engineBinaryName,
+  resolvedWorktreesDir,
+  readSettings,
+  roleRouting,
+} from './settings'
+import { resolveStepRouting, stageSkipReason, type StepRouting } from './routing'
 import { planWatchdogTimers } from './run-watchdog'
 import { readGlobalAgents, saveGlobalAgent } from './agents-global'
 import { fileHitl } from './hitl'
-import { composeSteps, pipelineLabel, type Step } from './pipelines'
+import { composeSteps, composeTaskSteps, pipelineLabel, TASK_PIPELINE_LABEL, type Step } from './pipelines'
 import { buildEngineCmd } from './engine-cmd'
 import { createCursorStreamDecoder } from './cursor-stream'
 import { createClaudeStreamDecoder } from './claude-stream'
@@ -529,6 +536,11 @@ export function hasAgents(repoRoot: string): boolean {
 
 const runs = new Map<string, AgentRun>()
 const procs = new Map<string, ChildProcess>()
+// Plan-gate parking: run id → resume/cancel hooks. A gated run has NO live
+// child process; resumeGate() (HITL approve / Runs tab) continues it,
+// cancelRun() finalizes it. In-memory only — a gated run does not survive an
+// app restart (it boots back as 'interrupted', same as every in-process run).
+const pendingGates = new Map<string, { resume: () => void; cancel: () => void }>()
 let emit: (channel: string, payload: unknown) => void = () => {}
 export function onAgentEvent(fn: (channel: string, payload: unknown) => void) {
   emit = fn
@@ -867,10 +879,97 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     })
   }
 
+  // Engine that runs the code stage (separation-of-duties reference point).
+  const codeStageIdx = spec.steps.findIndex((s) => s.role === 'code')
+  const codeStageEngine = codeStageIdx >= 0 ? routedSteps[codeStageIdx].engine : undefined
+  // Steps whose approveBefore gate has been HITL-approved this run.
+  const approvedSteps = new Set<number>()
+
   let stepIdx = 0
+
+  // Park the run at a plan gate: no child process, watchdog still armed (the
+  // soft cap will nag a forgotten gate; the hard cap interrupts it cleanly).
+  const parkAtGate = (step: Step) => {
+    run.gateWaiting = true
+    persistMeta(run)
+    append(
+      `\n[plan gate] awaiting approval before the ${step.label} stage — resolve the HITL item to continue, or cancel the run\n`,
+    )
+    emit('agent:status', run)
+    fileHitl({
+      source: 'agent',
+      title: `Plan approval · ${spec.title}`,
+      action: `review ${join(worktree, '.terminal', 'plan.md')} and resolve this item to start the ${step.label} stage`,
+      detail: `task run ${run.id.slice(0, 8)} · resolving starts ${step.label} on ${routedSteps[stepIdx].engine}`,
+      repo: basename(repoRoot),
+      repoRoot,
+      runId: run.id,
+      runSource: 'agent',
+    })
+    const gateStepIdx = stepIdx
+    pendingGates.set(run.id, {
+      resume: () => {
+        pendingGates.delete(run.id)
+        approvedSteps.add(gateStepIdx)
+        run.gateWaiting = false
+        persistMeta(run)
+        append(`\n[plan gate] approved — starting ${step.label}\n`)
+        emit('agent:status', run)
+        runStep()
+      },
+      cancel: () => {
+        pendingGates.delete(run.id)
+        run.gateWaiting = false
+        finalize('canceled')
+      },
+    })
+  }
+
   const runStep = () => {
+    // Stage-boundary gates: skip stages whose run conditions fail (separation
+    // of duties / budget recheck / heavy-diff condition) — visibly in the run
+    // log, never silently.
+    while (stepIdx < spec.steps.length) {
+      const s = spec.steps[stepIdx]
+      const verdict = stageSkipReason(s, {
+        stepEngine: routedSteps[stepIdx].engine,
+        codeEngine: codeStageEngine,
+        numstat: () => {
+          try {
+            return execFileSync(
+              'git',
+              ['-C', worktree, 'diff', '--numstat', `${defaultBase(repoRoot)}...HEAD`],
+              { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+            )
+          } catch {
+            return null
+          }
+        },
+        budgetGate:
+          s.role === 'verify'
+            ? () => {
+                try {
+                  const { gateSpawn } = require('./budgets') as typeof import('./budgets')
+                  return gateSpawn('task')
+                } catch {
+                  return { decision: 'allow', reason: '' }
+                }
+              }
+            : undefined,
+      })
+      if ('skip' in verdict) {
+        append(`\n━━ step ${stepIdx + 1}/${spec.steps.length} · ${s.label} — skipped: ${verdict.skip} ━━\n`)
+        stepIdx++
+        continue
+      }
+      if (verdict.note) append(`\n[${s.label}] ${verdict.note}\n`)
+      break
+    }
+    if (stepIdx >= spec.steps.length) return finalize('done', 0)
     const step = spec.steps[stepIdx]
     const routed = routedSteps[stepIdx]
+    // Plan gate: park for HITL approval before this step spends money.
+    if (step.approveBefore && !approvedSteps.has(stepIdx)) return parkAtGate(step)
     if (spec.steps.length > 1) {
       // Role-tagged steps surface their engine in the marker so the Runs tab's
       // live tail shows which model family is driving each stage.
@@ -1038,8 +1137,6 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
               repoRoot,
             })
           } else {
-            reaped = true
-            append(`\n[runtime cap] hard cap of ${mins(t.atMs)}m exceeded — sending SIGTERM (worktree + commits preserved)\n`)
             emitActivity({
               kind: 'error',
               title: `Agent reaped at hard cap · ${spec.title}`,
@@ -1047,6 +1144,17 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
               repo: repoLabel,
               repoRoot,
             })
+            // A run parked at a plan gate has no child process to SIGTERM —
+            // interrupt it directly instead of arming `reaped` for a process
+            // that will never exit.
+            if (pendingGates.has(run.id)) {
+              pendingGates.delete(run.id)
+              append(`\n[runtime cap] hard cap of ${mins(t.atMs)}m exceeded while awaiting plan approval — interrupting\n`)
+              finalize('interrupted')
+              return
+            }
+            reaped = true
+            append(`\n[runtime cap] hard cap of ${mins(t.atMs)}m exceeded — sending SIGTERM (worktree + commits preserved)\n`)
             procs.get(run.id)?.kill('SIGTERM')
           }
         }, Math.min(t.atMs, 2_147_483_647)), // clamp: a >24.8d delay overflows setTimeout and fires immediately
@@ -1084,6 +1192,78 @@ export function runAgent(
     inPlace: agent.inPlace,
     force: agent.force,
     model: model ?? agent.model,
+  })
+}
+
+/** Probe an engine binary through the same login shell the runner spawns
+ *  with — so PATH additions from ~/.zshrc count, exactly as they will at
+ *  spawn time. */
+function engineAvailable(engine: Engine): boolean {
+  try {
+    execFileSync(LOGIN_SHELL, ['-l', '-c', `command -v ${shq(enginePath(engine))}`], {
+      stdio: 'ignore',
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Task-first entry: a freeform prompt becomes a role-routed pipeline run —
+ *  plan(opus) → code(cursor) → review(codex) → verify(opus, heavy only) — in
+ *  ONE worktree, visible in the Runs tab like any other run. No agent, no
+ *  engine picking, no terminal session: the Settings.roles table decides who
+ *  runs each stage. Concurrency: the runSpec duplicate guard (agentId 'task'
+ *  + repo) refuses a second simultaneous task in the same repo. */
+export function runTask(repoRoot: string, text: string): AgentRun | { error: string } {
+  const t = text.trim()
+  if (!t) return { error: 'empty task' }
+  const s = readSettings()
+  const steps = composeTaskSteps(t, s.taskFlow)
+  // Preflight: every engine the role table routes to must exist BEFORE we
+  // create a worktree or spend anything — a missing cursor-agent should fail
+  // the task in the composer, not three stages in.
+  const engines = [
+    ...new Set(
+      steps.map(
+        (st) =>
+          resolveStepRouting({
+            step: st,
+            specEngine: s.defaultEngine,
+            roles: s.roles,
+            engineDefault: engineDefaultModel,
+          }).engine,
+      ),
+    ),
+  ]
+  for (const e of engines) {
+    if (!engineAvailable(e)) {
+      return {
+        error: `the ${e} engine (${engineBinaryName(e)}) is not on PATH — install it or change Settings → Role routing`,
+      }
+    }
+  }
+  // Budget gate at task start (re-checked at the verify boundary — a long
+  // task can cross the daily cap mid-run).
+  try {
+    const { gateSpawn } = require('./budgets') as typeof import('./budgets')
+    const g = gateSpawn('task')
+    if (g.decision === 'refuse') {
+      return { error: `budget gate refused: ${g.reason}. Set /budget override or raise the cap.` }
+    }
+  } catch {
+    /* budget module unavailable — allow */
+  }
+  const norm = t.replace(/\s+/g, ' ')
+  const title = norm.length > 64 ? `${norm.slice(0, 63)}…` : norm
+  return runSpec(repoRoot, {
+    id: 'task',
+    title,
+    steps,
+    // Display + untagged-step fallback only — every task step carries a role,
+    // so routing comes from Settings.roles (snapshot at spawn).
+    engine: roleRouting('code').engine,
+    pipeline: TASK_PIPELINE_LABEL,
   })
 }
 
@@ -1434,12 +1614,26 @@ export function runPrAgent(
 export function cancelRun(runId: string): boolean {
   const run = runs.get(runId)
   const p = procs.get(runId)
+  const gate = pendingGates.get(runId)
   if (run && run.status === 'running') {
     run.status = 'canceled'
     persistMeta(run)
   }
+  if (gate) {
+    // Parked at a plan gate — no child process; finalize directly.
+    gate.cancel()
+    return true
+  }
   p?.kill('SIGTERM')
   return !!p
+}
+
+/** Continue a run parked at a plan-approval gate (HITL resolve / Runs tab). */
+export function resumeGate(runId: string): boolean {
+  const gate = pendingGates.get(runId)
+  if (!gate) return false
+  gate.resume()
+  return true
 }
 
 /** Remove a finished run's worktree (the branch/commits/PR remain). */

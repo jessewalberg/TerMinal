@@ -45,6 +45,54 @@ export type HeavyVerdict = {
   diffLines: number
 }
 
+export type StageGateCtx = {
+  /** Engine resolved for THIS step. */
+  stepEngine: EngineId
+  /** Engine resolved for the run's code stage, when one exists. */
+  codeEngine?: EngineId
+  /** Lazily computed `git diff --numstat <base>...HEAD`; null = unavailable. */
+  numstat: () => string | null
+  /** Budget gate probe — consulted only at the verify boundary (a long run
+   *  can cross the daily cap between task start and the verify stage). */
+  budgetGate?: () => { decision: string; reason?: string }
+}
+
+export type StageGateVerdict = { skip: string } | { note?: string }
+
+/** Stage-boundary gate, pure: should this step be skipped, and why? Checked
+ *  cheapest-first: separation of duties (policy), then budget, then the
+ *  heavy-diff condition (needs git). The runner appends the reason to the run
+ *  log either way — a skipped stage must be visible, never silent. */
+export function stageSkipReason(
+  step: Pick<Step, 'role' | 'condition'>,
+  ctx: StageGateCtx,
+): StageGateVerdict {
+  // Reviewer ≠ implementer (global policy): a review/verify stage that
+  // resolved to the code stage's family would be self-review — skip it
+  // rather than counterfeit the gate.
+  if ((step.role === 'review' || step.role === 'verify') && ctx.codeEngine) {
+    if (sameEngineFamily(ctx.stepEngine, ctx.codeEngine)) {
+      return {
+        skip: `separation of duties: ${ctx.codeEngine} implemented the code stage — same-family ${step.role} would be self-review`,
+      }
+    }
+  }
+  if (step.role === 'verify' && ctx.budgetGate) {
+    const g = ctx.budgetGate()
+    if (g.decision === 'refuse') return { skip: `budget gate: ${g.reason || 'cap reached'}` }
+  }
+  if (step.condition === 'heavy') {
+    const numstat = ctx.numstat()
+    if (numstat === null) {
+      return { note: 'verify gate: diff unavailable — running verify (fail safe)' }
+    }
+    const verdict = isHeavyChange(numstat)
+    if (!verdict.heavy) return { skip: `not heavy — ${verdict.reason}` }
+    return { note: `verify gate: heavy change — ${verdict.reason}` }
+  }
+  return {}
+}
+
 /** Decide whether a worktree diff is HEAVY (verify-stage trigger). Input is
  *  the raw `git diff --numstat <base>...HEAD` output; classification reuses
  *  the PR risk heuristic (high-risk paths or a large diff ⇒ heavy) rather
