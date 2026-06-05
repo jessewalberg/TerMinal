@@ -19,6 +19,7 @@ import { forgeFor } from './forge'
 import { getPersona } from './personas'
 import { learningsPreambleFor } from './learnings'
 import { enginePath, engineDefaultModel, resolvedWorktreesDir, readSettings } from './settings'
+import { resolveStepRouting, type StepRouting } from './routing'
 import { planWatchdogTimers } from './run-watchdog'
 import { readGlobalAgents, saveGlobalAgent } from './agents-global'
 import { fileHitl } from './hitl'
@@ -86,6 +87,12 @@ export type AgentRun = {
   /** Snapshot of the agent's force flag at run-time — so historical runs
    *  display FORCE even if the agent is later deleted or rescoped. */
   force?: boolean
+  /** Per-step resolved engines (task runs) — snapshot at spawn so the Runs tab
+   *  can show a chip row instead of mislabeling a multi-engine run with one logo. */
+  stepEngines?: Engine[]
+  /** True while the run is parked at a plan-approval gate (HITL) — no child
+   *  process is alive; resumeGate() continues it. */
+  gateWaiting?: boolean
 }
 
 const OUTPUT_CAP = 400_000
@@ -780,6 +787,19 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
   const header =
     `▸ ${spec.title} · ${spec.engine}${spec.persona ? ` · as ${spec.persona}` : ''}` +
     `${spec.pipeline ? ` · ${spec.pipeline}` : ''}\n${baseLine}\n▸ worktree ${worktree}\n${forceLine}\n`
+  // Resolve every step's engine+model ONCE at spawn (snapshot semantics: a
+  // role-policy change mid-run never reshuffles an in-flight run). Untagged
+  // steps resolve byte-identically to the pre-routing behavior.
+  const routedSteps: StepRouting[] = spec.steps.map((s) =>
+    resolveStepRouting({
+      step: s,
+      specEngine: spec.engine,
+      specModel: spec.model,
+      roles: readSettings().roles,
+      engineDefault: engineDefaultModel,
+    }),
+  )
+  const multiEngine = spec.steps.some((s) => s.role)
   const run: AgentRun = {
     id: randomUUID(),
     agentId: spec.id,
@@ -794,6 +814,7 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     branch,
     output: header,
     force: spec.force,
+    ...(multiEngine ? { stepEngines: routedSteps.map((r) => r.engine) } : {}),
   }
   runs.set(run.id, run)
   persistMeta(run)
@@ -831,25 +852,10 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     append(formatAgentRunCompletion({ status, exitCode, startedAt: run.startedAt, endedAt: run.endedAt }))
     persistMeta(run)
     emit('agent:status', run)
-    // Try to extract claude -p / codex exec usage from the captured output
-    // and record an AIRun ledger entry. Best-effort — silent on miss.
-    try {
-      // Lazy-require to keep agents.ts decoupled from the observability layer.
-      const { recordRunnerInvocation } = require('./ai-collectors') as typeof import('./ai-collectors')
-      recordRunnerInvocation({
-        source: spec.engine === 'codex' ? 'codex-exec' : 'claude-p',
-        output: run.output,
-        repoRoot,
-        runId: run.id,
-        agentId: spec.id,
-        startedAt: run.startedAt,
-        endedAt: run.endedAt!,
-        exitCode: exitCode ?? -1,
-        modelHint: spec.model || engineDefaultModel(spec.engine) || undefined,
-      })
-    } catch {
-      /* observability is non-critical; never block run completion */
-    }
+    // Usage/spend recording happens PER STEP in runStep's exit handler (each
+    // step is its own CLI invocation with its own engine + usage tail), not
+    // here — a multi-engine task run would mis-attribute spend if the whole
+    // run were keyed on one engine.
     emitActivity({
       // infra/run failures surface as 'error' (notify) so they don't hide in the
       // agent-run stream; normal completions stay 'agent-run'.
@@ -864,18 +870,26 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
   let stepIdx = 0
   const runStep = () => {
     const step = spec.steps[stepIdx]
-    if (spec.steps.length > 1) append(`\n━━ step ${stepIdx + 1}/${spec.steps.length} · ${step.label} ━━\n\n`)
+    const routed = routedSteps[stepIdx]
+    if (spec.steps.length > 1) {
+      // Role-tagged steps surface their engine in the marker so the Runs tab's
+      // live tail shows which model family is driving each stage.
+      const engineTag = step.role ? ` · ${routed.engine}` : ''
+      append(`\n━━ step ${stepIdx + 1}/${spec.steps.length} · ${step.label}${engineTag} ━━\n\n`)
+    }
     // Script-first: if .agents/<id>.sh (or global ~/.config/TerMinal/scripts/<id>.sh)
     // exists, exec it directly with env vars instead of building a claude/codex
     // command from the prompt. Inside the script the operator can mix
     // deterministic shell with `claude -p` / `codex exec` however they want.
     const scriptPath = locateScript(repoRoot, spec.id)
-    // Resolve model in priority order: explicit spec override > per-engine
-    // Settings default > nothing (engine picks its own default). Same value
-    // flows into both TERMINAL_MODEL (visible to scripts) and the buildCmd
-    // fallback for prompt-style agents — so a script's `--model
-    // "${TERMINAL_MODEL:-sonnet}"` pattern sees the user's Settings default.
-    const effectiveModel = spec.model || engineDefaultModel(spec.engine) || ''
+    // Engine + model were resolved per step at spawn time (routedSteps): for
+    // untagged steps this is exactly the old chain (explicit spec override >
+    // per-engine Settings default > nothing); role-tagged steps route via
+    // Settings.roles. The same value flows into both TERMINAL_MODEL (visible
+    // to scripts) and the buildCmd fallback for prompt-style agents — so a
+    // script's `--model "${TERMINAL_MODEL:-sonnet}"` pattern sees the user's
+    // Settings default.
+    const effectiveModel = routed.model
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       // Inject TerMinal's bin dir so scripts can call `terminal-cli ...`.
@@ -886,7 +900,7 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
       TERMINAL_AGENT_ID: spec.id,
       TERMINAL_BRANCH: branch,
       TERMINAL_WORKTREE: worktree,
-      TERMINAL_ENGINE: spec.engine,
+      TERMINAL_ENGINE: routed.engine,
       ...(effectiveModel ? { TERMINAL_MODEL: effectiveModel } : {}),
       // FORCE-MODE: passes the block-main-merge hook's env-var carve-out.
       // Only set when the agent has `force: true`; never inherited from the
@@ -905,7 +919,7 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     }
     const cmd = scriptPath
       ? shq(scriptPath)
-      : buildCmd(spec.engine, worktree, promptForStep, effectiveModel || undefined)
+      : buildCmd(routed.engine, worktree, promptForStep, effectiveModel || undefined)
     // Wrap the spawn in `script -q /dev/null` so claude/codex think they're on
     // a TTY and stream output as it's generated. Without this, `claude -p`
     // buffers everything until exit and the run log shows nothing mid-run
@@ -920,25 +934,72 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     // cursor + prompt-style claude emit NDJSON (--output-format stream-json);
     // decode it back to plain text + progress breadcrumbs, one decoder per
     // spawned process. A new step = a new process = a fresh stream, so the
-    // decoder is per-step. Script-first agents (scriptPath) emit their own
+    // decoder is per-step — keyed on the STEP's resolved engine (a cursor code
+    // stage followed by a codex review stage must not share a decoder, or the
+    // live log garbles). Script-first agents (scriptPath) emit their own
     // plain text — never decode those, or non-JSON lines would be swallowed.
     // codex streams human-readable text through the PTY and needs no decoder.
     const decode =
-      spec.engine === 'cursor'
+      routed.engine === 'cursor' && !scriptPath
         ? createCursorStreamDecoder()
-        : spec.engine === 'claude' && !scriptPath
+        : routed.engine === 'claude' && !scriptPath
           ? createClaudeStreamDecoder()
           : null
+    // Per-step output capture for the spend ledger: the decoded text for the
+    // claude/codex tail parsers, plus the RAW stream for cursor — cursor's
+    // usage lives in the terminal `result` NDJSON event, which the display
+    // decoder deliberately drops.
+    const stepStartedAt = Date.now()
+    let stepText = ''
+    let stepRaw = ''
+    const cap = (s: string) => (s.length > OUTPUT_CAP ? s.slice(-OUTPUT_CAP) : s)
     p.stdout?.on('data', (d: Buffer) => {
-      const text = decode ? decode(d.toString()) : d.toString()
-      if (text) append(text)
+      const raw = d.toString()
+      stepRaw = cap(stepRaw + raw)
+      const text = decode ? decode(raw) : raw
+      if (text) {
+        stepText = cap(stepText + text)
+        append(text)
+      }
     })
-    p.stderr?.on('data', (d: Buffer) => append(d.toString()))
+    p.stderr?.on('data', (d: Buffer) => {
+      const raw = d.toString()
+      stepText = cap(stepText + raw)
+      append(raw)
+    })
+    // Record this step's usage in the AIRun ledger, keyed on the STEP's
+    // resolved engine — a multi-engine run records one entry per stage so
+    // spend attribution stays honest. Best-effort — silent on miss.
+    const recordStepLedger = (code: number | null) => {
+      try {
+        // Lazy-require to keep agents.ts decoupled from the observability layer.
+        const { recordRunnerInvocation } = require('./ai-collectors') as typeof import('./ai-collectors')
+        recordRunnerInvocation({
+          source:
+            routed.engine === 'codex'
+              ? 'codex-exec'
+              : routed.engine === 'cursor'
+                ? 'cursor-agent'
+                : 'claude-p',
+          output: routed.engine === 'cursor' ? stepRaw : stepText,
+          repoRoot,
+          runId: run.id,
+          agentId: spec.id,
+          startedAt: stepStartedAt,
+          endedAt: Date.now(),
+          exitCode: code ?? -1,
+          modelHint: effectiveModel || undefined,
+        })
+      } catch {
+        /* observability is non-critical; never block run completion */
+      }
+    }
     p.on('error', (err) => {
       append(`\n[spawn error] ${err.message}\n`)
       finalize('failed')
     })
     p.on('exit', (code) => {
+      recordStepLedger(code)
       if (run.status === 'canceled') return finalize('canceled', code ?? undefined)
       if (reaped) return finalize('interrupted', code ?? undefined) // hard-cap SIGTERM, not a crash
       if (code !== 0) return finalize('failed', code ?? undefined)
