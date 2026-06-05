@@ -11,6 +11,7 @@
 //   terminal-cli ticket "<title>" "<body>"              file a backlog ticket on TERMINAL_REPO
 //   terminal-cli hitl "<title>" "<action>"              file a global HITL item + Telegram ping
 //   terminal-cli activity <kind> "<title>" "<detail>"   emit one activity-feed event
+//   terminal-cli run start|finish|log ...               record terminal-started workflow lifecycle
 //   terminal-cli notify "<message>"                     send a Telegram message (raw)
 //
 //   terminal-cli state                                  print this agent's full state JSON
@@ -28,10 +29,11 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rea
 import { join, basename, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { execSync, execFile } from 'node:child_process'
+import { execSync, execFile, execFileSync } from 'node:child_process'
 
 const CFG = join(homedir(), '.config', 'TerMinal')
 const ACTIVITY = join(CFG, 'activity.jsonl')
+const RUNS_DIR = join(CFG, 'cron-runs')
 const HITL_FILE = join(CFG, 'hitl.json')
 const SETTINGS_FILE = join(CFG, 'settings.json')
 const AGENT_STATE_DIR = join(CFG, 'agent-state')
@@ -40,6 +42,7 @@ const repo = process.env.TERMINAL_REPO || ''
 const repoLabel = repo ? basename(repo) : ''
 const runId = process.env.TERMINAL_RUN_ID || ''
 const agentId = process.env.TERMINAL_AGENT_ID || ''
+const runSource = process.env.TERMINAL_RUN_SOURCE || (runId ? 'workflow' : '')
 
 function readTelegram() {
   try {
@@ -90,25 +93,209 @@ function inferKind(title) {
   return 'info'
 }
 
-function emitActivity(kind, title, detail) {
+function emitActivity(kind, title, detail, extra = {}) {
   mkdirSync(CFG, { recursive: true })
   // If caller passed 'info' (the default fallback) AND the title matches a
   // pattern, upgrade to the specific kind. Explicit kinds stay as-is.
   const resolvedKind = !kind || kind === 'info' ? inferKind(title) : kind
+  const activityRunId = extra.runId || runId
+  const activityRunSource = extra.runSource || runSource
   const ev = {
     id: randomUUID(),
     ts: Date.now(),
     kind: resolvedKind,
     title: title || '',
     detail: detail || '',
-    repo: repoLabel,
-    repoRoot: repo,
+    repo: extra.repo ?? repoLabel,
+    repoRoot: extra.repoRoot ?? repo,
     // runId is auto-attached so the Activity tab can click-jump to the run
-    // that emitted the event. runSource is 'cron' because terminal-cli is the
-    // helper scripts use, which only run inside cron-fired bash bodies.
-    ...(runId ? { runId, runSource: 'cron' } : {}),
+    // that emitted the event. The runner sets TERMINAL_RUN_SOURCE for cron and
+    // in-process agents; manual workflow records use "workflow".
+    ...(activityRunId ? { runId: activityRunId, ...(activityRunSource ? { runSource: activityRunSource } : {}) } : {}),
   }
   appendFileSync(ACTIVITY, JSON.stringify(ev) + '\n')
+}
+
+function parseFlags(args) {
+  const pos = []
+  const opt = {}
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (!a.startsWith('--')) {
+      pos.push(a)
+      continue
+    }
+    const eq = a.indexOf('=')
+    if (eq > 2) {
+      opt[a.slice(2, eq)] = a.slice(eq + 1)
+      continue
+    }
+    const key = a.slice(2)
+    const next = args[i + 1]
+    if (next === undefined || next.startsWith('--')) opt[key] = 'true'
+    else {
+      opt[key] = next
+      i++
+    }
+  }
+  return { pos, opt }
+}
+
+function git(repoRoot, args) {
+  return execFileSync('git', args, { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' }).trim()
+}
+
+function detectRepoRoot(cwd = process.cwd()) {
+  if (repo) return repo
+  try {
+    return git(cwd, ['rev-parse', '--show-toplevel'])
+  } catch {
+    return cwd
+  }
+}
+
+function detectBranch(repoRoot) {
+  if (!repoRoot) return ''
+  try {
+    return git(repoRoot, ['branch', '--show-current'])
+  } catch {
+    return ''
+  }
+}
+
+function safeRunId(id) {
+  return String(id || '').replace(/[^\w-]/g, '')
+}
+
+function runRecordPath(id) {
+  return join(RUNS_DIR, `${safeRunId(id)}.json`)
+}
+
+function runLogPath(id) {
+  return join(RUNS_DIR, `${safeRunId(id)}.log`)
+}
+
+function readRunRecord(id) {
+  const safe = safeRunId(id)
+  if (!safe) return null
+  try {
+    return JSON.parse(readFileSync(runRecordPath(safe), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function writeRunRecord(rec) {
+  mkdirSync(RUNS_DIR, { recursive: true })
+  writeFileSync(runRecordPath(rec.id), JSON.stringify(rec, null, 2))
+}
+
+function appendRunLog(id, text) {
+  mkdirSync(RUNS_DIR, { recursive: true })
+  appendFileSync(runLogPath(id), text)
+}
+
+function runCommand(sub, rest) {
+  if (sub === 'start') {
+    const { pos, opt } = parseFlags(rest)
+    const workflowId = pos[0]
+    const title = pos[1] || workflowId
+    if (!workflowId || !title) {
+      console.error(
+        'usage: terminal-cli run start <workflow-id> "<title>" [--engine <engine>] [--repo <repoRoot>] [--branch <branch>] [--worktree <path>]',
+      )
+      process.exit(2)
+    }
+
+    const repoRoot = opt.repo || detectRepoRoot()
+    const label = opt['repo-label'] || (repoRoot ? basename(repoRoot) : '')
+    const id = randomUUID()
+    const startedAt = Date.now()
+    const rec = {
+      id,
+      source: 'workflow',
+      scheduleId: `workflow:${workflowId}`,
+      agentId: workflowId,
+      agentTitle: title,
+      engine: opt.engine || process.env.TERMINAL_ENGINE || 'local',
+      status: 'running',
+      startedAt,
+      repoRoot,
+      repoLabel: label,
+      branch: opt.branch || detectBranch(repoRoot),
+      worktree: opt.worktree || repoRoot || process.cwd(),
+    }
+    writeRunRecord(rec)
+    appendRunLog(
+      id,
+      `Workflow started · ${title}\n` +
+        `▸ id ${id}\n` +
+        `▸ engine ${rec.engine}\n` +
+        `▸ repo ${repoRoot || '(unknown)'}\n` +
+        `▸ branch ${rec.branch || '(unknown)'}\n\n`,
+    )
+    emitActivity('agent-run', `Workflow started · ${title}`, `${rec.engine} · ${label}`, {
+      repo: label,
+      repoRoot,
+      runId: id,
+      runSource: 'workflow',
+    })
+    console.log(id)
+    return
+  }
+
+  if (sub === 'finish') {
+    const { pos, opt } = parseFlags(rest)
+    const id = pos[0]
+    const status = pos[1] || 'done'
+    if (!id || !['done', 'failed', 'canceled', 'interrupted'].includes(status)) {
+      console.error('usage: terminal-cli run finish <run-id> <done|failed|canceled|interrupted> [--exit-code <n>] [--error <message>]')
+      process.exit(2)
+    }
+    const rec = readRunRecord(id)
+    if (!rec) {
+      console.error(`terminal-cli run finish: no run record for ${id}`)
+      process.exit(1)
+    }
+    const exitCode =
+      opt['exit-code'] === undefined ? undefined : Number.isFinite(Number(opt['exit-code'])) ? Number(opt['exit-code']) : undefined
+    const endedAt = Date.now()
+    const next = {
+      ...rec,
+      status,
+      endedAt,
+      ...(exitCode !== undefined ? { exitCode } : {}),
+      ...(opt.error ? { error: opt.error } : {}),
+    }
+    writeRunRecord(next)
+    appendRunLog(
+      id,
+      `\nWorkflow finished · ${status}` +
+        `${exitCode !== undefined ? ` (exit ${exitCode})` : ''}` +
+        `${opt.error ? `\n${opt.error}` : ''}\n`,
+    )
+    emitActivity(status === 'failed' || status === 'interrupted' ? 'error' : 'agent-run', `Workflow ${status} · ${rec.agentTitle}`, opt.error || `${rec.engine} · ${rec.branch || rec.repoLabel}`, {
+      repo: rec.repoLabel,
+      repoRoot: rec.repoRoot,
+      runId: rec.id,
+      runSource: 'workflow',
+    })
+    return
+  }
+
+  if (sub === 'log') {
+    const id = rest[0]
+    const text = rest.slice(1).join(' ')
+    if (!id || !text) {
+      console.error('usage: terminal-cli run log <run-id> "<text>"')
+      process.exit(2)
+    }
+    appendRunLog(id, text.endsWith('\n') ? text : `${text}\n`)
+    return
+  }
+
+  console.error('usage: terminal-cli run <start|finish|log> ...')
+  process.exit(2)
 }
 
 function fileHitl(title, action) {
@@ -498,6 +685,9 @@ switch (cmd) {
   case 'activity':
     emitActivity(args[0], args[1], args[2])
     break
+  case 'run':
+    runCommand(args[0], args.slice(1))
+    break
   case 'deploy': {
     // terminal-cli deploy "<env>" "[sha]" — record a ship event (e.g. after
     // `wrangler deploy` in a per-repo /deploy skill). The lifecycle stage the
@@ -525,6 +715,7 @@ switch (cmd) {
         '  ticket "<title>" "<body>"                file a backlog ticket on TERMINAL_REPO\n' +
         '  hitl "<title>" "<action>"                file a global HITL item + Telegram ping\n' +
         '  activity <kind> "<title>" "<detail>"     emit one activity-feed event\n' +
+        '  run start|finish|log ...                 record terminal-started workflow lifecycle\n' +
         '  deploy "<env>" "[sha]"                   record a deploy/ship event (kind:deploy)\n' +
         '  notify "<message>"                       send a Telegram message (raw)\n' +
         '  state [get [key] | get-sha | set <k> <v> | set-sha <sha> | mark-main]\n' +

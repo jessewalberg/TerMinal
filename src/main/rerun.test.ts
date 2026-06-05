@@ -108,6 +108,15 @@ describe('rerunRun', () => {
     expect(deps.agentCalls).toEqual([{ repoRoot: '/repos/gamma', agentId: 'lint', engine: 'codex' }])
   })
 
+  it('does not re-dispatch terminal-started workflow rows through agents or schedules', () => {
+    const deps = spyDeps()
+    const res = rerunRun(makeRun({ source: 'workflow', agentId: 'stacked-mr' }), deps)
+    expect(res).toEqual({ error: 'terminal-started workflow runs must be re-run from the terminal' })
+    expect(deps.scheduleCalls).toEqual([])
+    expect(deps.agentCalls).toEqual([])
+    expect(deps.ticketCalls).toEqual([])
+  })
+
   it('re-dispatches ticket implementation runs through the ticket runner', () => {
     const deps = spyDeps({ agentResult: { error: 'unknown agent' } })
     const res = rerunRun(

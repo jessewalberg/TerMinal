@@ -41,6 +41,9 @@ const ticketIdFromAgentId = (agentId: string): number | null => {
 }
 
 export function rerunRun(run: UnifiedRun, deps: RerunDeps): RerunResult {
+  if (run.source === 'workflow') {
+    return { error: 'terminal-started workflow runs must be re-run from the terminal' }
+  }
   // Cron runs whose schedule still exists re-fire through launchd so the run
   // gets the same env vars + log path the schedule was configured with.
   if (run.source === 'cron' && run.scheduleId && deps.scheduleExists(run.scheduleId)) {
