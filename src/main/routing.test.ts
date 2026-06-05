@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import { resolveStepRouting, sameEngineFamily, isHeavyChange, stageSkipReason } from './routing'
+import { resolveStepRouting, sameEngineFamily, isHeavyChange, stageSkipReason, pickStreamDecoder } from './routing'
 import { defaultSettings } from './settings'
 
 const engineDefault = (e: string) => (e === 'claude' ? 'sonnet' : '')
@@ -182,5 +182,22 @@ describe('stageSkipReason (stage-boundary gates)', () => {
     )
     expect('skip' in r && r.skip).toMatch(/separation/i)
     expect(diffComputed).toBe(false)
+  })
+})
+
+describe('pickStreamDecoder', () => {
+  test('prompt-style cursor/claude get their decoders; codex never does', () => {
+    expect(pickStreamDecoder('cursor', false)).toBe('cursor')
+    expect(pickStreamDecoder('claude', false)).toBe('claude')
+    expect(pickStreamDecoder('codex', false)).toBeNull()
+  })
+
+  test('REGRESSION (deliberate fix): script-first steps get NO decoder for any engine', () => {
+    // Pre-task-routing, script-first CURSOR agents were piped through the
+    // NDJSON decoder, which silently dropped their plain-text output from the
+    // live log. Scripts emit their own text — never decode them.
+    expect(pickStreamDecoder('cursor', true)).toBeNull()
+    expect(pickStreamDecoder('claude', true)).toBeNull()
+    expect(pickStreamDecoder('codex', true)).toBeNull()
   })
 })

@@ -38,6 +38,22 @@ export function sameEngineFamily(a: EngineId, b: EngineId): boolean {
   return a === b
 }
 
+/** Which display decoder a step's process needs, from the STEP's resolved
+ *  engine. Script-first steps emit their own plain text — decoding would
+ *  swallow non-JSON lines, so they get none regardless of engine. (Before
+ *  task routing, script-first CURSOR agents were incorrectly piped through
+ *  the NDJSON decoder, which dropped their output from the live log — a
+ *  deliberate fix, regression-covered in routing.test.ts.) */
+export function pickStreamDecoder(
+  engine: EngineId,
+  scriptFirst: boolean,
+): 'cursor' | 'claude' | null {
+  if (scriptFirst) return null
+  if (engine === 'cursor') return 'cursor'
+  if (engine === 'claude') return 'claude'
+  return null
+}
+
 export type HeavyVerdict = {
   heavy: boolean
   reason: string

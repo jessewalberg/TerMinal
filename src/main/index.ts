@@ -836,15 +836,10 @@ ipcMain.handle('schedules:reconcile', () => reconcileSchedules())
 // Global HITL inbox (cross-repo). Filing fires a blocked notification (TG + macOS).
 ipcMain.handle('hitl:list', () => readHitl())
 ipcMain.handle('hitl:file', (_e, item: Omit<HitlItem, 'id' | 'status' | 'createdAt'>) => fileHitl(item))
-ipcMain.handle('hitl:resolve', (_e, id: string, resolved?: boolean) => {
-  const item = readHitl().find((i) => i.id === id)
-  const ok = resolveHitl(id, resolved ?? true)
-  // Plan-gate handoff: resolving a gate item resumes the parked run.
-  // resumeGate is a no-op for runs that are not parked, so unrelated
-  // run-linked HITLs resolve harmlessly.
-  if (ok && resolved !== false && item?.runId && item.runSource === 'agent') resumeGate(item.runId)
-  return ok
-})
+// Plan-gate handoff happens inside resolveHitl via the onHitlResolve listener
+// registered in agents.ts — Telegram /resolve and the inline keyboard resume
+// a parked run exactly like this IPC path does.
+ipcMain.handle('hitl:resolve', (_e, id: string, resolved?: boolean) => resolveHitl(id, resolved ?? true))
 ipcMain.handle('hitl:remove', (_e, id: string) => removeHitl(id))
 // Factory: read-only cross-repo health roll-up + start the orchestrator in-place.
 ipcMain.handle('factory:health', () => factoryHealth())

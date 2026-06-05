@@ -26,10 +26,10 @@ import {
   readSettings,
   roleRouting,
 } from './settings'
-import { resolveStepRouting, stageSkipReason, type StepRouting } from './routing'
+import { resolveStepRouting, stageSkipReason, pickStreamDecoder, type StepRouting } from './routing'
 import { planWatchdogTimers } from './run-watchdog'
 import { readGlobalAgents, saveGlobalAgent } from './agents-global'
-import { fileHitl } from './hitl'
+import { fileHitl, resolveHitl, onHitlResolve } from './hitl'
 import { composeSteps, composeTaskSteps, pipelineLabel, TASK_PIPELINE_LABEL, type Step } from './pipelines'
 import { buildEngineCmd } from './engine-cmd'
 import { createCursorStreamDecoder } from './cursor-stream'
@@ -536,11 +536,23 @@ export function hasAgents(repoRoot: string): boolean {
 
 const runs = new Map<string, AgentRun>()
 const procs = new Map<string, ChildProcess>()
-// Plan-gate parking: run id → resume/cancel hooks. A gated run has NO live
-// child process; resumeGate() (HITL approve / Runs tab) continues it,
-// cancelRun() finalizes it. In-memory only — a gated run does not survive an
-// app restart (it boots back as 'interrupted', same as every in-process run).
-const pendingGates = new Map<string, { resume: () => void; cancel: () => void }>()
+// Plan-gate parking: run id → resume/cancel hooks + the gate's HITL item id.
+// A gated run has NO live child process; resumeGate() (HITL approve / Runs
+// tab) continues it, cancelRun() finalizes it. In-memory only — a gated run
+// does not survive an app restart (it boots back as 'interrupted', same as
+// every in-process run).
+const pendingGates = new Map<
+  string,
+  { resume: () => void; cancel: () => void; hitlId: string }
+>()
+
+// EVERY surface that resolves the gate's HITL item (IPC, Telegram /resolve,
+// inline keyboard) resumes the parked run — registered here so hitl.ts stays
+// agents-free. resumeGate is a no-op for runs that are not parked, so other
+// run-linked agent HITLs resolve harmlessly.
+onHitlResolve((item) => {
+  if (item.runId && item.runSource === 'agent') resumeGate(item.runId)
+})
 let emit: (channel: string, payload: unknown) => void = () => {}
 export function onAgentEvent(fn: (channel: string, payload: unknown) => void) {
   emit = fn
@@ -588,7 +600,12 @@ export function loadPersistedRuns() {
   for (const f of files) {
     try {
       const m = JSON.parse(readFileSync(join(RUNS_DIR, f), 'utf8')) as AgentRun
-      if (m.status === 'running') m.status = 'interrupted'
+      if (m.status === 'running') {
+        m.status = 'interrupted'
+        // The in-memory gate died with the old process — a recovered run must
+        // not advertise a resumable approve action it can't honor.
+        m.gateWaiting = false
+      }
       let output = ''
       try {
         const buf = readFileSync(logPath(m.id), 'utf8')
@@ -860,6 +877,10 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     run.status = status
     run.endedAt = Date.now()
     run.exitCode = exitCode
+    // A terminal run is never gate-parked — clear the flag (and any orphaned
+    // gate entry) so the Runs tab can't offer a no-op approve on a dead run.
+    run.gateWaiting = false
+    pendingGates.delete(run.id)
     procs.delete(run.id)
     append(formatAgentRunCompletion({ status, exitCode, startedAt: run.startedAt, endedAt: run.endedAt }))
     persistMeta(run)
@@ -896,7 +917,7 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
       `\n[plan gate] awaiting approval before the ${step.label} stage — resolve the HITL item to continue, or cancel the run\n`,
     )
     emit('agent:status', run)
-    fileHitl({
+    const hitlId = fileHitl({
       source: 'agent',
       title: `Plan approval · ${spec.title}`,
       action: `review ${join(worktree, '.terminal', 'plan.md')} and resolve this item to start the ${step.label} stage`,
@@ -905,11 +926,15 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
       repoRoot,
       runId: run.id,
       runSource: 'agent',
-    })
+    }).id
     const gateStepIdx = stepIdx
+    // Both hooks delete the gate FIRST, then resolve the HITL item — so the
+    // onHitlResolve listener's resumeGate() re-entry finds no gate and no-ops.
     pendingGates.set(run.id, {
+      hitlId,
       resume: () => {
         pendingGates.delete(run.id)
+        resolveHitl(hitlId) // Runs-tab approval must not leave a stale inbox item
         approvedSteps.add(gateStepIdx)
         run.gateWaiting = false
         persistMeta(run)
@@ -919,6 +944,7 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
       },
       cancel: () => {
         pendingGates.delete(run.id)
+        resolveHitl(hitlId) // moot once the run is canceled
         run.gateWaiting = false
         finalize('canceled')
       },
@@ -1038,10 +1064,11 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     // live log garbles). Script-first agents (scriptPath) emit their own
     // plain text — never decode those, or non-JSON lines would be swallowed.
     // codex streams human-readable text through the PTY and needs no decoder.
+    const decoderKind = pickStreamDecoder(routed.engine, !!scriptPath)
     const decode =
-      routed.engine === 'cursor' && !scriptPath
+      decoderKind === 'cursor'
         ? createCursorStreamDecoder()
-        : routed.engine === 'claude' && !scriptPath
+        : decoderKind === 'claude'
           ? createClaudeStreamDecoder()
           : null
     // Per-step output capture for the spend ledger: the decoded text for the
@@ -1146,9 +1173,11 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
             })
             // A run parked at a plan gate has no child process to SIGTERM —
             // interrupt it directly instead of arming `reaped` for a process
-            // that will never exit.
-            if (pendingGates.has(run.id)) {
+            // that will never exit, and retire its approval HITL item.
+            const gate = pendingGates.get(run.id)
+            if (gate) {
               pendingGates.delete(run.id)
+              resolveHitl(gate.hitlId)
               append(`\n[runtime cap] hard cap of ${mins(t.atMs)}m exceeded while awaiting plan approval — interrupting\n`)
               finalize('interrupted')
               return

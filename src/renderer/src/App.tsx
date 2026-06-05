@@ -811,7 +811,10 @@ export default function App() {
       {taskComposer && (
         <TaskComposer
           seed={taskComposer}
-          activeRepoRoot={activeWorkspaceRoot}
+          // activeCtx.repoRoot is the GIT ROOT of the active session; the
+          // workspace root is just the session cwd, which may be a subdir and
+          // would not match the fleet repo list (wrong-repo default risk).
+          activeRepoRoot={activeCtx?.repoRoot || activeWorkspaceRoot}
           onClose={() => setTaskComposer(null)}
         />
       )}

@@ -180,12 +180,32 @@ export function fileHitl(input: Omit<HitlItem, 'id' | 'status' | 'createdAt'>): 
   return item
 }
 
+// Resolve listeners: other modules (the agents plan gate) react when an item
+// transitions open → resolved, regardless of WHICH surface resolved it (IPC,
+// Telegram /resolve, inline keyboard). Fires only on the open→resolved
+// transition, so a listener that itself calls resolveHitl cannot loop.
+type ResolveListener = (item: HitlItem) => void
+const resolveListeners: ResolveListener[] = []
+export function onHitlResolve(cb: ResolveListener): void {
+  resolveListeners.push(cb)
+}
+
 export function resolveHitl(id: string, resolved = true): boolean {
   const list = readHitl()
   const i = list.findIndex((h) => h.id === id)
   if (i < 0) return false
+  const wasOpen = list[i].status === 'open'
   list[i] = { ...list[i], status: resolved ? 'resolved' : 'open', resolvedAt: resolved ? Date.now() : undefined }
   write(list)
+  if (wasOpen && resolved) {
+    for (const cb of resolveListeners) {
+      try {
+        cb(list[i])
+      } catch {
+        /* a listener error never breaks resolution */
+      }
+    }
+  }
   return true
 }
 
