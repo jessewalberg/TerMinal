@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import { composeSteps, pipelineLabel, listPipelines, PIPELINE_IDS } from './pipelines'
+import { composeSteps, composeTaskSteps, pipelineLabel, listPipelines, PIPELINE_IDS } from './pipelines'
 
 const base = { label: 'task', prompt: 'do the thing' }
 
@@ -66,5 +66,56 @@ describe('listPipelines / PIPELINE_IDS', () => {
 
   test('PIPELINE_IDS matches the pipeline set', () => {
     expect([...PIPELINE_IDS].sort()).toEqual(['review', 'review-iterate', 'single'])
+  })
+})
+
+describe('composeTaskSteps (task-first role pipeline)', () => {
+  const task = 'add dark mode to the settings panel'
+
+  test('heavy mode: plan→code→review→verify with roles tagged, verify conditional', () => {
+    const steps = composeTaskSteps(task, { verify: 'heavy', planGate: false })
+    expect(steps.map((s) => s.label)).toEqual(['plan', 'code', 'review', 'verify'])
+    expect(steps.map((s) => s.role)).toEqual(['plan', 'code', 'review', 'verify'])
+    expect(steps[3].condition).toBe('heavy')
+    expect(steps.slice(0, 3).every((s) => s.condition === undefined)).toBe(true)
+  })
+
+  test('always mode: verify included unconditionally', () => {
+    const steps = composeTaskSteps(task, { verify: 'always', planGate: false })
+    expect(steps.map((s) => s.role)).toEqual(['plan', 'code', 'review', 'verify'])
+    expect(steps[3].condition).toBeUndefined()
+  })
+
+  test('never mode: verify omitted at compose time', () => {
+    const steps = composeTaskSteps(task, { verify: 'never', planGate: false })
+    expect(steps.map((s) => s.role)).toEqual(['plan', 'code', 'review'])
+  })
+
+  test('planGate marks the code step approveBefore', () => {
+    const gated = composeTaskSteps(task, { verify: 'heavy', planGate: true })
+    expect(gated[1].approveBefore).toBe(true)
+    const open = composeTaskSteps(task, { verify: 'heavy', planGate: false })
+    expect(open[1].approveBefore).toBeUndefined()
+  })
+
+  test('plan step carries the task text and the plan-artifact contract', () => {
+    const steps = composeTaskSteps(task, { verify: 'heavy', planGate: false })
+    expect(steps[0].prompt).toContain(task)
+    expect(steps[0].prompt).toContain('.terminal/plan.md')
+    // plan stage must not implement
+    expect(steps[0].prompt.toLowerCase()).toContain('do not write or change any production code')
+  })
+
+  test('code step requires the plan artifact and opens a PR (never merges)', () => {
+    const steps = composeTaskSteps(task, { verify: 'heavy', planGate: false })
+    expect(steps[1].prompt).toContain('.terminal/plan.md')
+    expect(steps[1].prompt.toLowerCase()).toContain('fail')
+    expect(steps[1].prompt).toContain('MR: <url>')
+    expect(steps[1].prompt.toLowerCase()).toContain('never merge')
+  })
+
+  test('existing pipelines are untouched (no roles leak into composeSteps)', () => {
+    const steps = composeSteps(base, null, 'review-iterate')
+    expect(steps.every((s) => s.role === undefined && s.condition === undefined)).toBe(true)
   })
 })
