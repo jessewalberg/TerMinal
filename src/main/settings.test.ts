@@ -7,6 +7,8 @@ import {
   sealSecrets,
   openSecrets,
   classifyProjectsDir,
+  roleRoutingFrom,
+  ROLE_IDS,
 } from './settings'
 
 describe('secrets at rest (seal/open)', () => {
@@ -173,5 +175,57 @@ describe('worktreesFrom', () => {
   })
   test('falls back to <projects>/.worktrees', () => {
     expect(worktreesFrom('', '/projects')).toBe('/projects/.worktrees')
+  })
+})
+
+describe('role routing (task-first model policy)', () => {
+  test('defaults: plan/verify→claude opus, code→cursor, review→codex', () => {
+    const s = defaultSettings()
+    expect(s.roles.plan).toEqual({ engine: 'claude', model: 'opus' })
+    expect(s.roles.code).toEqual({ engine: 'cursor', model: '' })
+    expect(s.roles.review).toEqual({ engine: 'codex', model: '' })
+    expect(s.roles.verify).toEqual({ engine: 'claude', model: 'opus' })
+    expect(s.taskFlow).toEqual({ verify: 'heavy', planGate: false })
+  })
+
+  test('migrate: settings.json without roles/taskFlow seeds defaults (back-compat)', () => {
+    const m = migrate({ onboarded: true })
+    expect(m.roles).toEqual(defaultSettings().roles)
+    expect(m.taskFlow).toEqual(defaultSettings().taskFlow)
+  })
+
+  test('migrate: valid role overrides round-trip; invalid entries fall to defaults per-key', () => {
+    const m = migrate({
+      roles: {
+        plan: { engine: 'codex', model: 'gpt-5' },
+        code: { engine: 'nonsense', model: 42 },
+      },
+      taskFlow: { verify: 'always', planGate: true },
+    })
+    expect(m.roles.plan).toEqual({ engine: 'codex', model: 'gpt-5' })
+    expect(m.roles.code).toEqual({ engine: 'cursor', model: '' }) // invalid engine → default kept
+    expect(m.roles.review).toEqual(defaultSettings().roles.review)
+    expect(m.taskFlow).toEqual({ verify: 'always', planGate: true })
+  })
+
+  test('migrate: valid engine with wrong-typed model keeps engine, blanks model', () => {
+    const m = migrate({ roles: { review: { engine: 'claude', model: 42 } } })
+    expect(m.roles.review).toEqual({ engine: 'claude', model: '' })
+  })
+
+  test('migrate: invalid taskFlow values fall back per-key', () => {
+    const m = migrate({ taskFlow: { verify: 'sometimes', planGate: 'yes' } })
+    expect(m.taskFlow).toEqual({ verify: 'heavy', planGate: false })
+  })
+
+  test('roleRoutingFrom: configured table wins; absent/partial table falls to defaults', () => {
+    expect(roleRoutingFrom(undefined, 'plan')).toEqual({ engine: 'claude', model: 'opus' })
+    const roles = { review: { engine: 'claude' as const, model: 'sonnet' } }
+    expect(roleRoutingFrom(roles, 'review')).toEqual({ engine: 'claude', model: 'sonnet' })
+    expect(roleRoutingFrom(roles, 'code')).toEqual({ engine: 'cursor', model: '' })
+  })
+
+  test('ROLE_IDS lists the four stages in pipeline order', () => {
+    expect(ROLE_IDS).toEqual(['plan', 'code', 'review', 'verify'])
   })
 })

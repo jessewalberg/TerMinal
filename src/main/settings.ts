@@ -27,6 +27,20 @@ const ENGINE_BIN: Record<EngineId, string> = {
 export function engineBinaryName(engine: EngineId): string {
   return ENGINE_BIN[engine] ?? engine
 }
+// --- task-first role routing (ADR: type a task → each stage picks its engine) -
+// A task run is a fixed stage chain; each stage is a ROLE the settings table
+// maps to an engine+model. Defaults: plan/verify→claude opus, code→cursor,
+// review→codex (reviewer ≠ implementer — different model family by policy).
+export type RoleId = 'plan' | 'code' | 'review' | 'verify'
+export const ROLE_IDS: RoleId[] = ['plan', 'code', 'review', 'verify']
+/** Engine+model a role resolves to. model '' = let the engine pick its default. */
+export type RoleCfg = { engine: EngineId; model: string }
+export type TaskFlowCfg = {
+  /** When the verify stage runs: only on heavy diffs (default), every task, or never. */
+  verify: 'heavy' | 'always' | 'never'
+  /** Pause after the plan stage (HITL approval) before the code stage spends money. */
+  planGate: boolean
+}
 export type ForgePref = 'auto' | 'github' | 'gitlab'
 export type TelegramCfg = {
   notify: boolean // mirror notifications to Telegram (opt-in)
@@ -68,14 +82,22 @@ export type Settings = {
   maxRunHardMs: number
   /** Repos manually hidden from the fleet inventory (#14). Absolute paths. */
   hiddenRepos: string[]
+  /** Role → engine+model routing for task runs (plan/code/review/verify). */
+  roles: Record<RoleId, RoleCfg>
+  /** Task-flow behavior knobs (verify gating, plan-approval gate). */
+  taskFlow: TaskFlowCfg
 }
 
 // A patch may carry partial nested telegram/engines/apps without losing siblings.
-export type SettingsPatch = Partial<Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter'>> & {
+export type SettingsPatch = Partial<
+  Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter' | 'roles' | 'taskFlow'>
+> & {
   telegram?: Partial<TelegramCfg>
   engines?: Partial<Record<EngineId, Partial<EngineCfg>>>
   apps?: Partial<AppsCfg>
   openrouter?: Partial<OpenRouterCfg>
+  roles?: Partial<Record<RoleId, Partial<RoleCfg>>>
+  taskFlow?: Partial<TaskFlowCfg>
 }
 
 const DEFAULT_EDITOR = 'Cursor'
@@ -103,6 +125,13 @@ export function defaultSettings(): Settings {
     maxRunMs: DEFAULT_SOFT_RUN_MS,
     maxRunHardMs: 0,
     hiddenRepos: [],
+    roles: {
+      plan: { engine: 'claude', model: 'opus' },
+      code: { engine: 'cursor', model: '' },
+      review: { engine: 'codex', model: '' },
+      verify: { engine: 'claude', model: 'opus' },
+    },
+    taskFlow: { verify: 'heavy', planGate: false },
   }
 }
 
@@ -149,6 +178,22 @@ export function migrate(raw: unknown): Settings {
   if (r.openrouter && typeof r.openrouter === 'object') {
     if (typeof r.openrouter.apiKey === 'string') s.openrouter.apiKey = r.openrouter.apiKey
     if (typeof r.openrouter.defaultModel === 'string') s.openrouter.defaultModel = r.openrouter.defaultModel
+  }
+  if (r.roles && typeof r.roles === 'object') {
+    for (const role of ROLE_IDS) {
+      const cfg = r.roles[role]
+      // Whitelist per-key: an unknown engine invalidates the whole entry (the
+      // default stays); a valid engine with a wrong-typed model keeps the
+      // engine and blanks the model (engine picks its own default).
+      if (cfg && typeof cfg === 'object' && ENGINE_IDS.includes(cfg.engine)) {
+        s.roles[role] = { engine: cfg.engine, model: typeof cfg.model === 'string' ? cfg.model : '' }
+      }
+    }
+  }
+  if (r.taskFlow && typeof r.taskFlow === 'object') {
+    const v = r.taskFlow.verify
+    if (v === 'heavy' || v === 'always' || v === 'never') s.taskFlow.verify = v
+    if (typeof r.taskFlow.planGate === 'boolean') s.taskFlow.planGate = r.taskFlow.planGate
   }
   return s
 }
@@ -246,6 +291,13 @@ export function patchSettings(patch: SettingsPatch): Settings {
       cursor: { ...cur.engines.cursor, ...(patch.engines?.cursor || {}) },
     },
     openrouter: { ...cur.openrouter, ...(patch.openrouter || {}) },
+    roles: {
+      plan: { ...cur.roles.plan, ...(patch.roles?.plan || {}) },
+      code: { ...cur.roles.code, ...(patch.roles?.code || {}) },
+      review: { ...cur.roles.review, ...(patch.roles?.review || {}) },
+      verify: { ...cur.roles.verify, ...(patch.roles?.verify || {}) },
+    },
+    taskFlow: { ...cur.taskFlow, ...(patch.taskFlow || {}) },
   }
   cache = next // in-memory stays plaintext
   try {
@@ -337,6 +389,23 @@ export function enginePath(engine: EngineId): string {
  *  case callers should let claude/codex pick their own default. */
 export function engineDefaultModel(engine: EngineId): string {
   return readSettings().engines[engine]?.defaultModel || ''
+}
+
+/** Pure: resolve a task role against a (possibly partial/absent) roles table.
+ *  Missing or partial entries fall back to the shipped defaults, so an old
+ *  settings.json routes identically to a fresh install. */
+export function roleRoutingFrom(
+  roles: Partial<Record<RoleId, RoleCfg>> | undefined,
+  role: RoleId,
+): RoleCfg {
+  const d = defaultSettings().roles[role]
+  const r = roles?.[role]
+  return { engine: r?.engine ?? d.engine, model: r?.model ?? d.model }
+}
+
+/** Which engine+model handles a task stage — reads Settings.roles. */
+export function roleRouting(role: RoleId): RoleCfg {
+  return roleRoutingFrom(readSettings().roles, role)
 }
 
 export const telegramNotifyEnabled = () => readSettings().telegram.notify
