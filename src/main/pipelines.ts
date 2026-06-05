@@ -18,6 +18,10 @@ export type Step = {
 
 const REVIEW_STAGE: Step = {
   label: 'review',
+  // Policy-routed: the review stage resolves via Settings.roles (codex by
+  // default) so reviewer != implementer holds on EVERY pipeline run, not just
+  // task runs. The runner's same-family guard skips it rather than self-review.
+  role: 'review',
   prompt:
     'Now act as a meticulous senior reviewer of the work just done on this branch. Inspect `git diff` against the base branch and `git log`. Evaluate correctness, security, architecture, and quality. Fix any real issues you find directly in this worktree — with tests — and commit. If a PR is open for this branch, update it. End with a concise review summary: what you found and what you changed.',
 }
@@ -59,10 +63,18 @@ function resolvePipeline(pipelineId?: string) {
 }
 
 /** Compose the runnable steps: base task + pipeline stages, each prefixed with
- *  the persona framing (if any). */
-export function composeSteps(base: Step, personaPrompt: string | null, pipelineId?: string): Step[] {
-  return [base, ...resolvePipeline(pipelineId).stages].map((s) => ({
-    label: s.label,
+ *  the persona framing (if any). `workRole` tags the base step for the Auto
+ *  engine pick (role policy decides who does the work); the spread preserves
+ *  stage tags like REVIEW_STAGE's role. */
+export function composeSteps(
+  base: Step,
+  personaPrompt: string | null,
+  pipelineId?: string,
+  workRole?: RoleId,
+): Step[] {
+  const tagged = workRole ? { ...base, role: workRole } : base
+  return [tagged, ...resolvePipeline(pipelineId).stages].map((s) => ({
+    ...s,
     prompt: personaPrompt ? `${personaPrompt}\n\n---\n\n${s.prompt}` : s.prompt,
   }))
 }

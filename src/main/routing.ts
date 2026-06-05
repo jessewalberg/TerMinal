@@ -26,7 +26,12 @@ export function resolveStepRouting(args: {
 }): StepRouting {
   const role = args.step.role ? roleRoutingFrom(args.roles, args.step.role) : null
   const engine = role?.engine ?? args.specEngine
-  const model = args.specModel || role?.model || args.engineDefault(engine) || ''
+  // "Pick governs work; review still routes": the run's explicit model applies
+  // only to untagged (work) steps — leaking a work-engine alias into a
+  // role-tagged stage would cross engines (codex --model opus) and fail.
+  const model = role
+    ? role.model || args.engineDefault(engine) || ''
+    : args.specModel || args.engineDefault(engine) || ''
   return { engine, model }
 }
 

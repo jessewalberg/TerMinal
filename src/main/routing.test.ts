@@ -38,17 +38,24 @@ describe('resolveStepRouting', () => {
     ).toEqual({ engine: 'claude', model: 'sonnet' })
   })
 
-  test('explicit per-run model override beats the role model (per-run > policy)', () => {
+  test('explicit per-run model stays on the WORK stage — never leaks into role-tagged steps', () => {
+    // "Pick governs work; review still routes": a per-run model alias belongs
+    // to the picked work engine. Leaking it into a role-tagged stage would
+    // produce cross-engine aliases (codex --model opus) and fail the spawn.
     const roles = defaultSettings().roles
     expect(
       resolveStepRouting({
-        step: { role: 'plan' },
+        step: { role: 'review' },
         specEngine: 'claude',
-        specModel: 'haiku',
+        specModel: 'opus',
         roles,
         engineDefault,
-      }).model,
-    ).toBe('haiku')
+      }),
+    ).toEqual({ engine: 'codex', model: '' })
+    // untagged work step still honors the explicit pick, exactly as before
+    expect(
+      resolveStepRouting({ step: {}, specEngine: 'claude', specModel: 'opus', roles, engineDefault }),
+    ).toEqual({ engine: 'claude', model: 'opus' })
   })
 
   test('absent roles table falls back to shipped defaults for tagged steps', () => {

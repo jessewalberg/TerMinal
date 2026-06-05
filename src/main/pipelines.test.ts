@@ -114,8 +114,36 @@ describe('composeTaskSteps (task-first role pipeline)', () => {
     expect(steps[1].prompt.toLowerCase()).toContain('never merge')
   })
 
-  test('existing pipelines are untouched (no roles leak into composeSteps)', () => {
+  test('work + iterate steps stay untagged; no condition/gate leaks into composeSteps', () => {
+    // The work and iterate steps follow the run's explicit engine pick; only
+    // the REVIEW stage is policy-routed (reviewer != implementer everywhere).
     const steps = composeSteps(base, null, 'review-iterate')
-    expect(steps.every((s) => s.role === undefined && s.condition === undefined)).toBe(true)
+    expect(steps[0].role).toBeUndefined()
+    expect(steps[2].role).toBeUndefined()
+    expect(steps.every((s) => s.condition === undefined && s.approveBefore === undefined)).toBe(true)
+  })
+})
+
+describe('policy-routed pipeline stages (review separation everywhere)', () => {
+  test('review/review-iterate REVIEW stage carries role review; iterate stays on the work engine', () => {
+    const r = composeSteps(base, null, 'review')
+    expect(r[0].role).toBeUndefined() // work step follows the explicit pick
+    expect(r[1].role).toBe('review')
+    const ri = composeSteps(base, null, 'review-iterate')
+    expect(ri.map((s) => s.role)).toEqual([undefined, 'review', undefined])
+  })
+
+  test('workRole tags the base step (Auto pick)', () => {
+    const steps = composeSteps(base, null, 'review', 'code')
+    expect(steps[0].role).toBe('code')
+    expect(steps[1].role).toBe('review')
+    expect(composeSteps(base, null, 'single', 'review')[0].role).toBe('review')
+  })
+
+  test('persona prefix preserves role tags (spread, not rebuild)', () => {
+    const steps = composeSteps(base, 'YOU ARE CAREFUL', 'review', 'code')
+    expect(steps[0].role).toBe('code')
+    expect(steps[1].role).toBe('review')
+    expect(steps[1].prompt.startsWith('YOU ARE CAREFUL')).toBe(true)
   })
 })
