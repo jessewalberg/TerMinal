@@ -532,6 +532,29 @@ const git = (repo, args) =>
   execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const shq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`
 
+// Pure assembly of the headless one-shot CLI command for a schedule's engine.
+// Mirrors the canonical argv used elsewhere in the repo (src/main/bg-tasks.ts):
+//   claude  → relies on the spawn cwd (no -C / --workspace)
+//   codex   → needs `-C <worktree>`; prompt comes last
+//   cursor  → binary is `cursor-agent`; `--force` (run-everything, the
+//             non-interactive equivalent of codex's danger-full-access) and
+//             `--workspace <worktree>`.
+// Deliberately NO live-stream flags (claude's --output-format stream-json,
+// cursor's --stream-partial-output): cron pipes child stdout straight to a log
+// file with no decoder attached, so the in-process flags from
+// src/main/engine-cmd.ts would only litter the log with raw NDJSON. The
+// `script(1)` PTY wrapper already gives unbuffered plain text. `modelFlag` is
+// the caller-prebuilt ` --model <m>` string ('' when no model).
+export function buildHeadlessCmd(engine, prompt, worktree, modelFlag) {
+  if (engine === 'claude') {
+    return `claude -p ${shq(prompt)} --dangerously-skip-permissions${modelFlag}`
+  }
+  if (engine === 'cursor') {
+    return `cursor-agent -p ${shq(prompt)} --force --workspace ${shq(worktree)}${modelFlag}`
+  }
+  return `codex exec -s danger-full-access -C ${shq(worktree)}${modelFlag} ${shq(prompt)}`
+}
+
 function defaultBase(repo) {
   try {
     return git(repo, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).replace(/^origin\//, '')
@@ -704,9 +727,7 @@ async function runSchedule(id) {
       : null
   const cmd = scriptPath
     ? shq(scriptPath)
-    : sched.engine === 'claude'
-      ? `claude -p ${shq(sched.prompt)} --dangerously-skip-permissions${modelFlag}`
-      : `codex exec -s danger-full-access -C ${shq(worktree)}${modelFlag} ${shq(sched.prompt)}`
+    : buildHeadlessCmd(sched.engine, sched.prompt, worktree, modelFlag)
   const shell = process.env.SHELL || '/bin/zsh'
   writeFileSync(
     logFile,
@@ -1009,16 +1030,21 @@ function openReviewPatternHitlKeys() {
 
 // ---- entrypoint ------------------------------------------------------------
 
-const [, , action, arg] = process.argv
-if (action === 'run' && arg) {
-  runSchedule(arg).then((c) => process.exit(c))
-} else if (action === 'watchdog') {
-  runWatchdog().then((c) => process.exit(c))
-} else if (action === 'review-patterns') {
-  maybeRunReviewPatterns(arg === '--force').then(() => process.exit(0))
-} else {
-  console.error('usage: terminal-cron run <scheduleId>')
-  console.error('       terminal-cron watchdog')
-  console.error('       terminal-cron review-patterns [--force]')
-  process.exit(2)
+// Guard the dispatch so importing this module (e.g. from a unit test exercising
+// buildHeadlessCmd) doesn't fire a real run or process.exit. launchd invokes
+// the file directly, where import.meta.main is true.
+if (import.meta.main) {
+  const [, , action, arg] = process.argv
+  if (action === 'run' && arg) {
+    runSchedule(arg).then((c) => process.exit(c))
+  } else if (action === 'watchdog') {
+    runWatchdog().then((c) => process.exit(c))
+  } else if (action === 'review-patterns') {
+    maybeRunReviewPatterns(arg === '--force').then(() => process.exit(0))
+  } else {
+    console.error('usage: terminal-cron run <scheduleId>')
+    console.error('       terminal-cron watchdog')
+    console.error('       terminal-cron review-patterns [--force]')
+    process.exit(2)
+  }
 }
