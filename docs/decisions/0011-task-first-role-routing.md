@@ -107,3 +107,17 @@ cron-runs}.ts, src/preload/index.ts, renderer types/App/TaskComposer/
 SettingsPanel/TicketsBrowser/runs tab. Latent bugs fixed in the same series:
 cron cursor fall-through to codex (bin/terminal-cron), bg-tasks default-model
 fallback, cursor usage absent from the spend ledger.
+
+## Update 2026-06-05 — routing extended beyond ⌘K tasks (owner decisions)
+
+Owner chose to extend routing to (a) the review/review-iterate pipelines and
+(b) an Auto option in EnginePicker; factory-as-tasks and scheduled tasks stay
+deferred. New precedence rule (supersedes the blanket "per-run beats policy"):
+**an explicit engine/model pick governs the WORK stage only; review/verify
+stages always route via Settings.roles**, with the same-family runtime skip as
+backstop. Consequences encoded: REVIEW_STAGE carries role 'review' on every
+pipeline run; a per-run model alias never leaks into role-tagged stages; the
+separation guard's implementer reference falls back to the run's work engine
+(and stays off for check-only runs like PR reviews). /factory and /stacked-mr
+keep their existing skill-level codex review delegation — their implement
+stages still run the session engine until the deferred factory-as-tasks work.
