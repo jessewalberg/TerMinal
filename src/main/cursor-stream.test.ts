@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import { createCursorStreamDecoder } from './cursor-stream'
+import { createCursorStreamDecoder, parseCursorUsageFromOutput } from './cursor-stream'
 
 // Event shapes captured from a real `cursor-agent -p … --output-format
 // stream-json --stream-partial-output` run (see cursor-stream.ts header for the
@@ -139,5 +139,97 @@ describe('createCursorStreamDecoder', () => {
     expect(d('\x04\x08\x08\r\n')).toBe('')
     expect(d('not json at all\n')).toBe('')
     expect(d('\n\n')).toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseCursorUsageFromOutput — token usage from a cursor-agent stream-json run.
+//
+// Unlike claude -p / codex exec (which print a regex-scannable tail summary),
+// cursor-agent emits structured NDJSON. The terminal `result/success` event
+// carries a `usage` object in camelCase, and the leading `system/init` event
+// carries the model name. Fixtures below are VERBATIM from a real
+// `cursor-agent -p … --output-format stream-json --force` probe on this machine
+// (cursor-agent 2026.06.04). See cursor-stream.ts header.
+// ---------------------------------------------------------------------------
+
+const sysInit = (model: string) =>
+  JSON.stringify({
+    type: 'system',
+    subtype: 'init',
+    apiKeySource: 'login',
+    cwd: '/private/tmp/cursor-probe',
+    session_id: 'f1fc7306-78c0-425e-97ad-21f590e41550',
+    model,
+    permissionMode: 'default',
+  })
+
+const resultWithUsage = (usage: Record<string, number>) =>
+  JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    duration_ms: 4343,
+    duration_api_ms: 4343,
+    is_error: false,
+    result: 'pong',
+    session_id: 'f1fc7306-78c0-425e-97ad-21f590e41550',
+    request_id: '3be1086c-9ce4-4ca0-bb33-83aa67f88d91',
+    usage,
+  })
+
+const cursorTranscript = (lines: string[]) => lines.join('\n') + '\n'
+
+describe('parseCursorUsageFromOutput', () => {
+  test('extracts tokens + model from a real stream-json transcript with a usage result', () => {
+    const out = cursorTranscript([
+      sysInit('Composer 2.5'),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'q' }] } }),
+      asst('pong'),
+      resultWithUsage({ inputTokens: 21236, outputTokens: 38, cacheReadTokens: 5390, cacheWriteTokens: 0 }),
+    ])
+    const hit = parseCursorUsageFromOutput(out)
+    expect(hit).not.toBeNull()
+    expect(hit!.inputTokens).toBe(21236)
+    expect(hit!.outputTokens).toBe(38)
+    expect(hit!.cacheReadTokens).toBe(5390)
+    expect(hit!.model).toBe('Composer 2.5')
+  })
+
+  test('returns null when the stream carries no usage result (graceful miss → modelHint fallback)', () => {
+    // A transcript that streamed text but ended without a usage-bearing result
+    // event (e.g. the process was killed mid-turn). Caller falls back to modelHint.
+    const out = cursorTranscript([sysInit('Composer 2.5'), asst('partial answer', 1)])
+    expect(parseCursorUsageFromOutput(out)).toBeNull()
+  })
+
+  test('returns null for empty / non-JSON output', () => {
+    expect(parseCursorUsageFromOutput('')).toBeNull()
+    expect(parseCursorUsageFromOutput('not json at all\nstill not json\n')).toBeNull()
+  })
+
+  test('parses usage even when the result has zero output tokens (input-only is valid)', () => {
+    const out = cursorTranscript([
+      sysInit('Composer 2.5 Fast'),
+      resultWithUsage({ inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }),
+    ])
+    const hit = parseCursorUsageFromOutput(out)
+    expect(hit).not.toBeNull()
+    expect(hit!.inputTokens).toBe(100)
+    expect(hit!.outputTokens).toBe(0)
+    expect(hit!.model).toBe('Composer 2.5 Fast')
+  })
+
+  test('tolerates PTY chrome wrapping (CR endings, leading control bytes)', () => {
+    const out =
+      '\x04\x08\x08' +
+      sysInit('Composer 2.5') +
+      '\r\n' +
+      resultWithUsage({ inputTokens: 5, outputTokens: 2, cacheReadTokens: 1, cacheWriteTokens: 0 }) +
+      '\r\n\x1b[?25h'
+    const hit = parseCursorUsageFromOutput(out)
+    expect(hit).not.toBeNull()
+    expect(hit!.inputTokens).toBe(5)
+    expect(hit!.outputTokens).toBe(2)
+    expect(hit!.cacheReadTokens).toBe(1)
   })
 })

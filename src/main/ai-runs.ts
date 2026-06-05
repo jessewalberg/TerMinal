@@ -3,7 +3,13 @@
 // Sources: 'claude-code' (interactive Claude sessions, derived from
 // ~/.claude/projects transcripts), 'codex-cli' (interactive Codex sessions),
 // 'claude-p' (cron / in-process claude -p invocations), 'codex-exec' (cron /
-// in-process codex exec invocations).
+// in-process codex exec invocations), 'cursor-agent' (cron / in-process
+// cursor-agent stream-json invocations).
+//
+// Billable vs. subscription is implicit, not a flag: cost = costOf(model,...),
+// and subscription-CLI models (Composer, etc.) aren't in ai-pricing's table, so
+// their cost rows are $0 while tokens are still tracked. cursor-agent joins
+// claude-code / codex-cli on that same non-billable footing.
 //
 // Storage:
 //   ~/.config/TerMinal/ai-runs/<id>.json     per-run record
@@ -20,7 +26,7 @@ import { costOf, lookupPrice } from './ai-pricing'
 const DIR = join(homedir(), '.config', 'TerMinal', 'ai-runs')
 const STATS_DIR = join(homedir(), '.config', 'TerMinal', 'ai-stats')
 
-export type AIRunSource = 'claude-code' | 'codex-cli' | 'claude-p' | 'codex-exec'
+export type AIRunSource = 'claude-code' | 'codex-cli' | 'claude-p' | 'codex-exec' | 'cursor-agent'
 
 export type AIRun = {
   id: string

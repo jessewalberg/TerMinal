@@ -1,17 +1,20 @@
 // Collectors — observe every AI execution surface and feed the ai-runs/ ledger.
 // Wraps the existing transcript parsers and the cron/agent runner output paths.
 //
-// Four sources:
-//   claude-code  → reads ~/.claude/projects/<hash>/<sid>.jsonl
-//   codex-cli    → reads ~/.codex/sessions/<sid>/messages.jsonl (best effort)
-//   claude-p     → parses the usage summary line from `claude -p` stdout
-//   codex-exec   → parses the usage summary line from `codex exec` stdout
+// Five sources:
+//   claude-code   → reads ~/.claude/projects/<hash>/<sid>.jsonl
+//   codex-cli     → reads ~/.codex/sessions/<sid>/messages.jsonl (best effort)
+//   claude-p      → parses the usage summary line from `claude -p` stdout
+//   codex-exec    → parses the usage summary line from `codex exec` stdout
+//   cursor-agent  → parses the `result.usage` NDJSON event from cursor-agent's
+//                   `--output-format stream-json` stdout (parseCursorUsageFromOutput)
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { listAIRuns, writeAIRun, makeAIRun, type AIRunSource } from './ai-runs'
 import { runWedgedSessionScan } from './wedged-session-detector'
+import { parseCursorUsageFromOutput } from './cursor-stream'
 
 const CLAUDE_PROJECTS = join(homedir(), '.claude', 'projects')
 const CODEX_SESSIONS = join(homedir(), '.codex', 'sessions')
@@ -304,10 +307,28 @@ export function parseClaudeUsageFromOutput(out: string): UsageHit | null {
 /** codex exec uses a similar tail summary; same parser works in most cases. */
 export const parseCodexUsageFromOutput = parseClaudeUsageFromOutput
 
-/** Build + persist an AIRun for a wrapped `claude -p` / `codex exec` run that
- *  captured its child output. Returns null when no usage line found. */
+/** cursor-agent emits structured NDJSON, not a regex tail summary — its usage
+ *  lives in the `result.usage` event. Re-exported from cursor-stream (the pure,
+ *  dependency-free decoder module) so the parser stays unit-testable without the
+ *  electron-coupled ai-collectors graph. */
+export { parseCursorUsageFromOutput } from './cursor-stream'
+
+// Default model per source when neither the parsed transcript nor the caller's
+// modelHint names one. Subscription CLIs (cursor) price at $0 anyway.
+const DEFAULT_MODEL: Record<RunnerSource, string> = {
+  'claude-p': 'sonnet',
+  'codex-exec': 'gpt-5',
+  'cursor-agent': 'composer-2.5',
+}
+
+type RunnerSource = 'claude-p' | 'codex-exec' | 'cursor-agent'
+
+/** Build + persist an AIRun for a wrapped `claude -p` / `codex exec` /
+ *  `cursor-agent` run that captured its child output. Returns false (records
+ *  nothing) when no usage could be parsed — the caller treats observability as
+ *  best-effort. */
 export function recordRunnerInvocation(opts: {
-  source: 'claude-p' | 'codex-exec'
+  source: RunnerSource
   output: string
   repoRoot: string
   runId: string
@@ -320,16 +341,21 @@ export function recordRunnerInvocation(opts: {
   const parsed =
     opts.source === 'claude-p'
       ? parseClaudeUsageFromOutput(opts.output)
-      : parseCodexUsageFromOutput(opts.output)
+      : opts.source === 'codex-exec'
+        ? parseCodexUsageFromOutput(opts.output)
+        : parseCursorUsageFromOutput(opts.output)
   if (!parsed) return false
   const run = makeAIRun({
     source: opts.source,
     startedAt: opts.startedAt,
     endedAt: opts.endedAt,
-    model: parsed.model || opts.modelHint || (opts.source === 'claude-p' ? 'sonnet' : 'gpt-5'),
+    model: parsed.model || opts.modelHint || DEFAULT_MODEL[opts.source],
     inputTokens: parsed.inputTokens,
     outputTokens: parsed.outputTokens,
     cacheReadTokens: parsed.cacheReadTokens,
+    // cursor's result.usage carries cacheWriteTokens; the claude/codex tail
+    // parser does not (its UsageHit has no such field), so this is undefined there.
+    cacheWriteTokens: 'cacheWriteTokens' in parsed ? parsed.cacheWriteTokens : undefined,
     repoRoot: opts.repoRoot,
     runId: opts.runId,
     agentId: opts.agentId,

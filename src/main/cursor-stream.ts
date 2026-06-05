@@ -175,6 +175,72 @@ function renderEvent(ev: any, activeTools: Map<string, ToolContext>): string {
   return breadcrumb(type, ev.subtype, ev.name)
 }
 
+// ---------------------------------------------------------------------------
+// Usage extraction for the ai-runs ledger.
+//
+// cursor-agent does NOT print a regex-scannable tail summary like `claude -p` /
+// `codex exec`; it emits structured NDJSON. Token usage lives in the terminal
+// `result/success` event under a camelCase `usage` object, and the model name
+// lives in the leading `system/init` event:
+//
+//   {"type":"system","subtype":"init","model":"Composer 2.5",...}
+//   {"type":"result","subtype":"success","result":"…","usage":{
+//      "inputTokens":21236,"outputTokens":38,"cacheReadTokens":5390,"cacheWriteTokens":0}}
+//
+// Captured verbatim from a real probe (cursor-agent 2026.06.04). There is no
+// cost/USD field — cursor is a subscription CLI, so the ledger prices Composer
+// at $0 (its model isn't in ai-pricing's table → zero-cost row) while still
+// tracking tokens. Pure + dependency-free so it's unit-testable like the
+// decoder. Mirrors the UsageHit shape parseClaudeUsageFromOutput returns.
+// ---------------------------------------------------------------------------
+
+export type CursorUsageHit = {
+  model?: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
+function num(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0
+}
+
+/** Parse token usage from a captured cursor-agent stream-json run. Scans the
+ *  NDJSON for the `result` event's `usage` object (the source of truth) and the
+ *  `system/init` event's model name. Returns null when no usage-bearing result
+ *  event is present (e.g. the run was killed mid-turn) so the caller can fall
+ *  back to its modelHint, matching parseClaudeUsageFromOutput's null contract. */
+export function parseCursorUsageFromOutput(out: string): CursorUsageHit | null {
+  let model: string | undefined
+  let usage: CursorUsageHit | null = null
+  for (const seg of out.split(/\r\n|\r|\n/)) {
+    const clean = stripChrome(seg).trim()
+    if (!clean) continue
+    let ev: any
+    try {
+      ev = JSON.parse(clean)
+    } catch {
+      continue // chrome / non-JSON line — ignore
+    }
+    if (!ev || typeof ev !== 'object') continue
+    if (ev.type === 'system' && ev.subtype === 'init' && typeof ev.model === 'string' && !model) {
+      model = ev.model
+    }
+    const u = ev.type === 'result' ? ev.usage : undefined
+    if (u && typeof u === 'object') {
+      usage = {
+        inputTokens: num(u.inputTokens ?? u.input_tokens),
+        outputTokens: num(u.outputTokens ?? u.output_tokens),
+        cacheReadTokens: num(u.cacheReadTokens ?? u.cache_read_input_tokens) || undefined,
+        cacheWriteTokens: num(u.cacheWriteTokens ?? u.cache_creation_input_tokens) || undefined,
+      }
+    }
+  }
+  if (!usage) return null
+  return { ...usage, model }
+}
+
 export type CursorStreamDecoder = (chunk: string) => string
 
 /**

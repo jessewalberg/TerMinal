@@ -47,3 +47,43 @@ describe('makeAIRun — startedAt / durationMs invariants', () => {
     expect(Number.isNaN(durationMs)).toBe(true)
   })
 })
+
+describe('cursor-agent source — ledger acceptance + subscription ($0) cost', () => {
+  // cursor-agent is a subscription CLI like claude-code/codex-cli: TerMinal
+  // tracks its tokens but prices it at $0 because its model (Composer) is not in
+  // ai-pricing's table → lookupPrice returns the zero-cost row. These lock the
+  // source union and the non-billable cost behavior so cursor work stops being
+  // silently absent from the ledger.
+
+  test('makeAIRun accepts source: "cursor-agent" and preserves the token shape', () => {
+    const startedAt = 1_748_822_400_000
+    const run = makeAIRun({
+      source: 'cursor-agent',
+      model: 'Composer 2.5',
+      inputTokens: 21236,
+      outputTokens: 38,
+      cacheReadTokens: 5390,
+      cacheWriteTokens: 0,
+      repoRoot: '/tmp/repo',
+      startedAt,
+      endedAt: startedAt + 4343,
+    })
+    expect(run.source).toBe('cursor-agent')
+    expect(run.inputTokens).toBe(21236)
+    expect(run.outputTokens).toBe(38)
+    expect(run.cacheReadTokens).toBe(5390)
+  })
+
+  test('a Composer cursor run costs $0 (subscription / non-billable) while tokens are tracked', () => {
+    const run = makeAIRun({
+      source: 'cursor-agent',
+      model: 'Composer 2.5',
+      inputTokens: 100_000,
+      outputTokens: 5_000,
+      repoRoot: '/tmp/repo',
+      startedAt: 1_748_822_400_000,
+    })
+    expect(run.costUsd).toBe(0)
+    expect(run.inputTokens + run.outputTokens).toBeGreaterThan(0)
+  })
+})
