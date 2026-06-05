@@ -62,6 +62,7 @@ export function PrAgentActions({ pr, sym = '!' }: { pr: PrLite; sym?: string }) 
           }
           onClose={() => setKind(null)}
           onPick={launch}
+          autoRole={kind === 'review' ? 'review' : 'code'}
         />
       )}
     </>

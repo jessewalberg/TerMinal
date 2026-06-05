@@ -56,11 +56,19 @@ export function EnginePicker({
   hint,
   onPick,
   onClose,
+  autoRole = 'code',
+  autoEngineOverride,
 }: {
   title: string
   hint?: ReactNode
   onPick: (engine: EnginePick, persona: string, pipeline: string, model?: string) => void
   onClose: () => void
+  /** Which role the Auto pick routes the WORK through in this launch context
+   *  (PR review runs route via 'review'; everything else via 'code'). */
+  autoRole?: 'code' | 'review'
+  /** Per-agent pinned engine — beats the role policy, so Auto availability and
+   *  copy must reflect IT, not the roles table (Agents tab passes this). */
+  autoEngineOverride?: Engine
 }) {
   const [engine, setEngine] = useState<EnginePick | null>(null)
   const [model, setModel] = useState<string | undefined>(undefined)
@@ -126,30 +134,41 @@ export function EnginePicker({
         {step === 1 && (
           <>
             <p className="mb-3 text-[11.5px] text-zinc-500">1 · Launch with which engine?</p>
-            <button
-              onClick={() => roles && avail(roles.code.engine) && setEngine('auto')}
-              disabled={!roles || !avail(roles.code.engine)}
-              title={
-                roles && !avail(roles.code.engine)
-                  ? `role policy needs ${roles.code.engine}, which is not installed`
-                  : 'Role routing decides: the work runs on the code-role engine; review stages route separately (reviewer ≠ implementer)'
-              }
-              className={`mb-2 flex w-full items-center gap-2.5 rounded-xl border bg-black/20 p-3 text-left transition-colors ${
-                roles && avail(roles.code.engine)
-                  ? 'border-[var(--gt-accent)]/40 hover:border-[var(--gt-accent)] hover:bg-white/5'
-                  : 'cursor-not-allowed border-[var(--gt-border)]/50 opacity-40'
-              }`}
-            >
-              <Zap size={17} strokeWidth={1.75} className="shrink-0 text-[var(--gt-accent-light)]" />
-              <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-semibold text-zinc-100">Auto · role routing</div>
-                <div className="text-[11px] text-zinc-500">
-                  {roles
-                    ? `${roles.code.engine} does the work · ${roles.review.engine} reviews`
-                    : 'loading role policy…'}
-                </div>
-              </div>
-            </button>
+            {(() => {
+              // The engine Auto actually launches with in THIS context: the
+              // per-agent override when present, else the context's role.
+              const autoTarget = autoEngineOverride ?? (roles ? roles[autoRole].engine : null)
+              const autoOk = !!autoTarget && avail(autoTarget)
+              const autoCopy = !roles
+                ? 'loading role policy…'
+                : autoEngineOverride
+                  ? `${autoEngineOverride} does the work (agent override) · ${roles.review.engine} reviews`
+                  : autoRole === 'review'
+                    ? `${roles.review.engine} reviews (review role)`
+                    : `${roles.code.engine} does the work · ${roles.review.engine} reviews`
+              return (
+                <button
+                  onClick={() => autoOk && setEngine('auto')}
+                  disabled={!autoOk}
+                  title={
+                    autoTarget && !autoOk
+                      ? `Auto needs ${autoTarget} in this context, which is not installed`
+                      : 'Role routing decides: the work runs on this context\u2019s role engine; review stages route separately (reviewer \u2260 implementer)'
+                  }
+                  className={`mb-2 flex w-full items-center gap-2.5 rounded-xl border bg-black/20 p-3 text-left transition-colors ${
+                    autoOk
+                      ? 'border-[var(--gt-accent)]/40 hover:border-[var(--gt-accent)] hover:bg-white/5'
+                      : 'cursor-not-allowed border-[var(--gt-border)]/50 opacity-40'
+                  }`}
+                >
+                  <Zap size={17} strokeWidth={1.75} className="shrink-0 text-[var(--gt-accent-light)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-semibold text-zinc-100">Auto · role routing</div>
+                    <div className="text-[11px] text-zinc-500">{autoCopy}</div>
+                  </div>
+                </button>
+              )
+            })()}
             <div className="grid grid-cols-3 gap-2">
               {engineOrder.map((e) => {
                 const ok = avail(e)

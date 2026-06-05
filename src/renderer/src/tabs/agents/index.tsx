@@ -429,7 +429,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [outputs, setOutputs] = useState<Record<string, string>>({})
   const [sel, setSel] = useState<string | null>(null)
-  const [picking, setPicking] = useState<{ id: string; title: string } | null>(null)
+  const [picking, setPicking] = useState<{ id: string; title: string; engine?: Engine } | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editing, setEditing] = useState<Agent | 'new' | null>(null)
   // Persist UI position across reloads so coming back to the tab lands on the
@@ -818,7 +818,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
                   <span className="font-mono text-[10px] text-zinc-600">{selectedAgent.id}</span>
                   <div className="flex-1" />
                   <button
-                    onClick={() => setPicking({ id: selectedAgent.id, title: selectedAgent.title })}
+                    onClick={() => setPicking({ id: selectedAgent.id, title: selectedAgent.title, engine: selectedAgent.engine })}
                     disabled={busy}
                     className="inline-flex items-center gap-1 rounded-lg bg-[var(--gt-accent)] px-3 py-1.5 text-[12px] font-semibold text-white hover:opacity-90 disabled:opacity-40"
                   >
@@ -1271,7 +1271,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
                         )}
                       </div>
                       <button
-                        onClick={() => setPicking({ id: a.id, title: a.title })}
+                        onClick={() => setPicking({ id: a.id, title: a.title, engine: a.engine })}
                         disabled={busy}
                         className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-[var(--gt-accent)] px-3 py-1.5 text-[12px] font-semibold text-white hover:opacity-90 disabled:opacity-40"
                       >
@@ -1500,6 +1500,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
         <EnginePicker
           title={`Run · ${picking.title}`}
           onClose={() => setPicking(null)}
+          autoEngineOverride={picking.engine}
           onPick={(e, persona, pipeline, model) => {
             run(picking.id, e, persona, pipeline, model)
             setPicking(null)
