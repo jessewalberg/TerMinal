@@ -394,10 +394,21 @@ function RunsTab({ ctx }: { ctx: TabContext }) {
                   {r.force && <ForceChip />}
                   <span className="min-w-0 flex-1 truncate text-[12px] text-zinc-200">{r.agentTitle}</span>
                   <span className="shrink-0 font-mono text-[9.5px] text-zinc-600">{r.repoLabel}</span>
-                  <span className="inline-flex shrink-0 items-center gap-1 text-[9.5px] uppercase text-zinc-600">
-                    <EngineLogo engine={r.engine} size={10} />
-                    {r.engine}
-                  </span>
+                  {r.stepEngines?.length ? (
+                    <span
+                      className="inline-flex shrink-0 items-center gap-0.5"
+                      title={`stages: ${r.stepEngines.join(' → ')}`}
+                    >
+                      {r.stepEngines.map((e, i) => (
+                        <EngineLogo key={i} engine={e} size={10} />
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="inline-flex shrink-0 items-center gap-1 text-[9.5px] uppercase text-zinc-600">
+                      <EngineLogo engine={r.engine} size={10} />
+                      {r.engine}
+                    </span>
+                  )}
                   <span className="shrink-0 font-mono tabular-nums text-[10px] text-zinc-500">{dur}</span>
                   <span
                     className="w-14 shrink-0 text-right font-mono tabular-nums text-[10px] text-[var(--gt-accent-light)]"
@@ -426,10 +437,30 @@ function RunsTab({ ctx }: { ctx: TabContext }) {
               <Badge tone={sourceTone(selectedRun.source)}>{selectedRun.source}</Badge>
               {selectedRun.force && <ForceChip size="md" />}
               <span className="text-[13px] font-semibold text-zinc-100">{selectedRun.agentTitle}</span>
-              <span className="inline-flex items-center gap-1 text-[10px] uppercase text-zinc-600">
-                <EngineLogo engine={selectedRun.engine} size={11} />
-                {selectedRun.engine}
-              </span>
+              {selectedRun.stepEngines?.length ? (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] uppercase text-zinc-600"
+                  title={`stages: ${selectedRun.stepEngines.join(' → ')}`}
+                >
+                  {selectedRun.stepEngines.map((e, i) => (
+                    <EngineLogo key={i} engine={e} size={11} />
+                  ))}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[10px] uppercase text-zinc-600">
+                  <EngineLogo engine={selectedRun.engine} size={11} />
+                  {selectedRun.engine}
+                </span>
+              )}
+              {selectedRun.gateWaiting && (
+                <button
+                  onClick={() => window.gt.agents.resumeGate(selectedRun.id)}
+                  title="The plan stage finished; coding is parked until you approve (also resolvable from the HITL tab)"
+                  className="inline-flex items-center gap-1 rounded-md border border-amber-700/60 bg-amber-950/40 px-2 py-0.5 text-[10.5px] font-medium text-amber-300 hover:border-amber-500"
+                >
+                  Approve plan → start coding
+                </button>
+              )}
               <span className="font-mono text-[10.5px] text-zinc-600">{selectedRun.branch}</span>
               <div className="flex-1" />
               <span className="text-[10.5px] text-zinc-500">

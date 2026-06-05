@@ -13,6 +13,7 @@ import {
 import { EntryScreen, type Choice } from './components/EntryScreen'
 import { FleetView } from './components/FleetView'
 import { SettingsPanel } from './components/SettingsPanel'
+import { TaskComposer, type TaskComposerSeed } from './components/TaskComposer'
 import { Onboarding } from './components/Onboarding'
 import { SessionView, type Info } from './SessionView'
 import logo from './assets/logo.png'
@@ -153,6 +154,8 @@ export default function App() {
   const [fleetData, setFleetData] = useState<FleetSession[]>([])
   const [activeCtx, setActiveCtx] = useState<TabContext | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  // null = closed; {} = open empty; seeded = open pre-filled (ticket launch)
+  const [taskComposer, setTaskComposer] = useState<TaskComposerSeed | null>(null)
   const [onboarded, setOnboarded] = useState<boolean | null>(null) // null = loading
 
   // first-run gate: show onboarding until the user completes (or skips) it
@@ -350,6 +353,28 @@ export default function App() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [workspaces, activeWorkspaceRoot])
+
+  // ⌘K opens the task composer from ANY tab — the task-first entry point
+  // (type a task; role routing picks the engines; no session needed). Other
+  // surfaces (Tickets tab rows) pre-seed it via the gt:task-compose event.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault()
+        setTaskComposer((cur) => (cur ? cur : {}))
+      }
+    }
+    const onCompose = (e: Event) => {
+      const detail = (e as CustomEvent).detail as TaskComposerSeed | undefined
+      setTaskComposer(detail ?? {})
+    }
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('gt:task-compose', onCompose)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('gt:task-compose', onCompose)
+    }
+  }, [])
   const visibleSessionOrder = useMemo(() => {
     if (!activeKey) return []
     if (terminalLayout === 'single') return [activeKey]
@@ -783,6 +808,13 @@ export default function App() {
           </div>
         )}
       </div>
+      {taskComposer && (
+        <TaskComposer
+          seed={taskComposer}
+          activeRepoRoot={activeWorkspaceRoot}
+          onClose={() => setTaskComposer(null)}
+        />
+      )}
       {showSettings && (
         <SettingsPanel
           onClose={() => setShowSettings(false)}

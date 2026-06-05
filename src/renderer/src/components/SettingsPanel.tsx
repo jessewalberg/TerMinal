@@ -10,7 +10,7 @@ import {
   TerminalSquare,
   ClipboardCopy,
 } from 'lucide-react'
-import type { Settings, SettingsPatch, EnvDetect, Engine, ForgePref } from '../lib/types'
+import type { Settings, SettingsPatch, EnvDetect, Engine, ForgePref, RoleId } from '../lib/types'
 import { useProjectsDirCheck } from '../lib/useProjectsDirCheck'
 import { ProjectsDirWarning } from './ProjectsDirWarning'
 
@@ -549,6 +549,82 @@ export function SettingsPanel({ onClose, onRerunSetup }: { onClose: () => void; 
                 </button>
               ))}
             </div>
+          </Section>
+
+          <Section
+            title="Role routing (⌘K tasks)"
+            desc="Who runs each stage of a task: plan → code → review → verify. A review/verify stage that lands on the implementer's engine is skipped at run time (separation of duties)."
+          >
+            {(
+              [
+                ['plan', 'plans the work (no code changes)'],
+                ['code', 'implements the plan, opens the PR'],
+                ['review', 'checks the code (different family than code)'],
+                ['verify', 'final adversarial pass'],
+              ] as [RoleId, string][]
+            ).map(([role, hint]) => (
+              <div key={role} className="mb-2 flex items-center gap-2">
+                <span className="w-12 text-[11px] font-medium text-zinc-300">{role}</span>
+                <select
+                  value={s.roles[role].engine}
+                  onChange={(ev) =>
+                    // model resets with the engine — the old alias may not be
+                    // valid for the newly picked engine
+                    save({ roles: { [role]: { engine: ev.target.value as Engine, model: '' } } })
+                  }
+                  className="rounded-md border border-[var(--gt-border)] bg-black/30 px-1.5 py-0.5 text-[11px] text-zinc-200 outline-none"
+                >
+                  {(['claude', 'codex', 'cursor'] as Engine[]).map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={s.roles[role].model}
+                  onChange={(ev) => save({ roles: { [role]: { model: ev.target.value } } })}
+                  className="rounded-md border border-[var(--gt-border)] bg-black/30 px-1.5 py-0.5 text-[11px] text-zinc-200 outline-none"
+                >
+                  {MODEL_OPTIONS[s.roles[role].engine].map((m) => (
+                    <option key={m} value={m}>
+                      {m || '(engine default)'}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[10px] text-zinc-600">{hint}</span>
+              </div>
+            ))}
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-[11px] text-zinc-500">Verify stage:</span>
+              {(['heavy', 'always', 'never'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => save({ taskFlow: { verify: v } })}
+                  title={
+                    v === 'heavy'
+                      ? 'only when the diff is heavy (high-risk paths or >500 lines)'
+                      : v === 'always'
+                        ? 'every task'
+                        : 'skip the verify stage entirely'
+                  }
+                  className={`rounded-md border px-2.5 py-1 text-[11px] ${
+                    s.taskFlow.verify === v
+                      ? 'border-[var(--gt-accent)] bg-[var(--gt-accent)]/15 text-zinc-100'
+                      : 'border-[var(--gt-border)] text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {v === 'heavy' ? 'heavy only' : v}
+                </button>
+              ))}
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-zinc-400">
+              <input
+                type="checkbox"
+                checked={s.taskFlow.planGate}
+                onChange={(ev) => save({ taskFlow: { planGate: ev.target.checked } })}
+              />
+              Plan gate — park in HITL after planning; coding starts only when you approve
+            </label>
           </Section>
 
           {/* Forge */}

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Plus, Hand, ArrowUpRight, ChevronRight, ChevronDown, Bot, GitPullRequest } from 'lucide-react'
+import { Plus, Hand, ArrowUpRight, ChevronRight, ChevronDown, Bot, GitPullRequest, Zap } from 'lucide-react'
 import { Badge, badgeClasses } from './ui'
 import { Markdown } from './Markdown'
 import { EnginePicker } from './EnginePicker'
@@ -508,6 +508,26 @@ export function TicketsBrowser({ ctx, hitlOnly = false }: { ctx: TabContext; hit
                 >
                   <Bot size={13} strokeWidth={2} />
                   Implement → PR
+                </button>
+                <button
+                  onClick={() =>
+                    // Task-first launch: pre-seed the ⌘K composer with this
+                    // ticket — role routing picks the engines (no 3-step modal).
+                    window.dispatchEvent(
+                      new CustomEvent('gt:task-compose', {
+                        detail: {
+                          repoRoot: ctx.repoRoot,
+                          text: `Implement backlog ticket #${selected.id} — ${selected.title}\n\n${selected.body}`,
+                        },
+                      }),
+                    )
+                  }
+                  title="Run as a role-routed task: plan → code → review → verify (engines from Settings → Role routing)"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--gt-border)] px-3 py-1 text-[12px] font-semibold text-zinc-300 hover:border-[var(--gt-accent)]/50 hover:text-zinc-100"
+                >
+                  <Zap size={13} strokeWidth={2} />
+                  Task
+                  <span className="text-[9.5px] text-zinc-600">⌘K</span>
                 </button>
                 {started && (
                   <span className="text-[11px] text-[var(--gt-green)]">agent started · see the Agents tab</span>
