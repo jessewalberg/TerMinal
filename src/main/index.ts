@@ -98,6 +98,7 @@ import {
   removeWorktree,
   runTask,
   resumeGate,
+  type EnginePick,
   onAgentEvent,
   loadPersistedRuns,
   type Engine,
@@ -678,10 +679,10 @@ ipcMain.handle('schedules:design', (_e, text: string, engine: Engine) =>
 )
 ipcMain.handle('agents:pipelines', () => listPipelines())
 ipcMain.handle('personas:list', () => readPersonas(repoRootOf(cur().cwd)))
-ipcMain.handle('agents:run', (_e, agentId: string, engine?: Engine, persona?: string, pipeline?: string, model?: string) =>
+ipcMain.handle('agents:run', (_e, agentId: string, engine?: EnginePick, persona?: string, pipeline?: string, model?: string) =>
   runAgent(repoRootOf(cur().cwd), agentId, engine, persona, pipeline, model),
 )
-ipcMain.handle('agents:run-ticket', (_e, slug: string, engine: Engine, persona?: string, pipeline?: string, model?: string) => {
+ipcMain.handle('agents:run-ticket', (_e, slug: string, engine: EnginePick, persona?: string, pipeline?: string, model?: string) => {
   const root = repoRootOf(cur().cwd)
   const t = getTicket(root, slug)
   return t
@@ -694,7 +695,7 @@ ipcMain.handle(
     _e,
     pr: { iid: number; sourceBranch: string; title?: string; webUrl?: string },
     kind: PrAgentKind,
-    engine: Engine,
+    engine: EnginePick,
     persona?: string,
     pipeline?: string,
     model?: string,

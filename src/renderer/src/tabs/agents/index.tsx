@@ -48,7 +48,7 @@ import { BashHighlight } from '../../components/BashHighlight'
 import { SkillHint } from '../../components/SkillHint'
 import type { BadgeTone } from '../../components/ui'
 import { navigateTo } from '../../lib/nav'
-import type { Tab, TabContext, Agent, AgentRun, Engine } from '../../lib/types'
+import type { Tab, TabContext, Agent, AgentRun, Engine, EnginePick } from '../../lib/types'
 import { sanitizeLog as stripAnsi } from '../../lib/sanitizeLog'
 import { seedRunOutput, seedRunOutputs } from './agentRunOutputState'
 import { agentDotState } from './agentDotState'
@@ -663,7 +663,7 @@ function AgentsTab({ ctx }: { ctx: TabContext }) {
     if (el) el.scrollTop = el.scrollHeight
   }, [sel, selectedRun && outputs[selectedRun.id]])
 
-  const run = async (id: string, engine: Engine, persona: string, pipeline: string, model?: string) => {
+  const run = async (id: string, engine: EnginePick, persona: string, pipeline: string, model?: string) => {
     const r = await window.gt.agents.run(id, engine, persona, pipeline, model)
     if ('error' in r) {
       setOutputs((o) => ({ ...o, __err: r.error }))

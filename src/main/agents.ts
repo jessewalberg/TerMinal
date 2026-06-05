@@ -25,6 +25,7 @@ import {
   resolvedWorktreesDir,
   readSettings,
   roleRouting,
+  type RoleId,
 } from './settings'
 import { resolveStepRouting, stageSkipReason, pickStreamDecoder, type StepRouting } from './routing'
 import { planWatchdogTimers } from './run-watchdog'
@@ -725,14 +726,24 @@ function buildCmd(engine: Engine, worktree: string, prompt: string, model?: stri
 // Pipeline definitions + composition are pure (see ./pipelines, unit-tested).
 // All stages share the worktree + branch, so a later stage sees what an earlier
 // one committed. buildSteps just resolves the persona prompt off disk first.
-function buildSteps(repoRoot: string, base: Step, personaId?: string, pipelineId?: string) {
+function buildSteps(
+  repoRoot: string,
+  base: Step,
+  personaId?: string,
+  pipelineId?: string,
+  workRole?: RoleId,
+) {
   const p = personaId ? getPersona(repoRoot, personaId) : null
   return {
-    steps: composeSteps(base, p?.prompt ?? null, pipelineId),
+    steps: composeSteps(base, p?.prompt ?? null, pipelineId, workRole),
     persona: p?.title,
     pipeline: pipelineLabel(pipelineId),
   }
 }
+
+/** The launcher's engine choice: a concrete engine, or 'auto' = let the role
+ *  policy decide who does the work (and tag the work step accordingly). */
+export type EnginePick = Engine | 'auto'
 
 type RunSpec = {
   id: string
@@ -900,9 +911,18 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
     })
   }
 
-  // Engine that runs the code stage (separation-of-duties reference point).
+  // Engine that does the IMPLEMENTATION work (separation-of-duties reference
+  // point): the code-role step when one exists, else the run's work engine
+  // when the run has untagged work steps (agent/ticket pipelines). A run with
+  // ONLY check-role steps (e.g. a PR review run) has no implementer in-run —
+  // the guard stays off so the review itself is never self-skipped.
   const codeStageIdx = spec.steps.findIndex((s) => s.role === 'code')
-  const codeStageEngine = codeStageIdx >= 0 ? routedSteps[codeStageIdx].engine : undefined
+  const codeStageEngine =
+    codeStageIdx >= 0
+      ? routedSteps[codeStageIdx].engine
+      : spec.steps.some((s) => !s.role)
+        ? spec.engine
+        : undefined
   // Steps whose approveBefore gate has been HITL-approved this run.
   const approvedSteps = new Set<number>()
 
@@ -1198,29 +1218,36 @@ function runSpec(repoRoot: string, spec: RunSpec): AgentRun | { error: string } 
 export function runAgent(
   repoRoot: string,
   agentId: string,
-  engine?: Engine,
+  engine?: EnginePick,
   personaId?: string,
   pipelineId?: string,
   model?: string,
 ): AgentRun | { error: string } {
   const agent = readAgents(repoRoot).find((a) => a.id === agentId)
   if (!agent) return { error: 'unknown agent' }
+  // Auto = let the role policy do the work — unless the agent itself pins an
+  // engine (per-agent beats role policy in the precedence chain).
+  const auto = engine === 'auto'
+  const workEngine = auto
+    ? (agent.engine ?? roleRouting('code').engine)
+    : engine || agent.engine || 'codex'
   const { steps, persona, pipeline } = buildSteps(
     repoRoot,
     { label: agent.title, prompt: agent.prompt },
     personaId,
     pipelineId,
+    auto && !agent.engine ? 'code' : undefined,
   )
   return runSpec(repoRoot, {
     id: agent.id,
     title: agent.title,
     steps,
-    engine: engine || agent.engine || 'codex',
+    engine: workEngine,
     persona,
     pipeline,
     inPlace: agent.inPlace,
     force: agent.force,
-    model: model ?? agent.model,
+    model: auto ? agent.model : (model ?? agent.model),
   })
 }
 
@@ -1552,14 +1579,29 @@ After this completes the app reconciles schedules automatically — your new ent
 export function runTicketAgent(
   repoRoot: string,
   ticket: { id: number; title: string; body: string },
-  engine: Engine,
+  engine: EnginePick,
   personaId?: string,
   pipelineId?: string,
   model?: string,
 ): AgentRun | { error: string } {
+  const auto = engine === 'auto'
   const base = `Implement backlog ticket #${ticket.id}: ${ticket.title}\n\n${ticket.body}\n\nWork in this worktree on its branch. Implement the ticket end to end — keep changes surgical and add/adjust tests. Commit your work and open a PR that references ticket #${ticket.id}. If fully delivered set the ticket status to closed (else in-progress) and link the PR in its prs: field. End with a short summary of what changed and the PR URL.`
-  const { steps, persona, pipeline } = buildSteps(repoRoot, { label: `implement #${ticket.id}`, prompt: base }, personaId, pipelineId)
-  return runSpec(repoRoot, { id: `ticket-${ticket.id}`, title: `Implement #${ticket.id}`, steps, engine, persona, pipeline, model })
+  const { steps, persona, pipeline } = buildSteps(
+    repoRoot,
+    { label: `implement #${ticket.id}`, prompt: base },
+    personaId,
+    pipelineId,
+    auto ? 'code' : undefined,
+  )
+  return runSpec(repoRoot, {
+    id: `ticket-${ticket.id}`,
+    title: `Implement #${ticket.id}`,
+    steps,
+    engine: auto ? roleRouting('code').engine : engine,
+    persona,
+    pipeline,
+    model: auto ? undefined : model,
+  })
 }
 
 /** Spawn an agent that files ONE backlog ticket from a freeform request. Runs
@@ -1605,12 +1647,16 @@ export function runPrAgent(
   repoRoot: string,
   pr: { iid: number; sourceBranch: string; title?: string; webUrl?: string },
   kind: PrAgentKind,
-  engine: Engine,
+  engine: EnginePick,
   personaId?: string,
   pipelineId?: string,
   model?: string,
 ): AgentRun | { error: string } {
   if (!pr?.sourceBranch) return { error: 'PR/MR has no source branch' }
+  // Auto: a review run IS check-work (route via the review role); an iterate
+  // run is implementation (route via the code role).
+  const auto = engine === 'auto'
+  const autoRole: RoleId = kind === 'review' ? 'review' : 'code'
   const f = forgeFor(repoRoot)
   const tag = `${f.label} ${f.sym}${pr.iid}` // e.g. "PR #12" / "MR !12"
   const noteCmd =
@@ -1627,16 +1673,22 @@ export function runPrAgent(
           label: `iterate ${f.sym}${pr.iid}`,
           prompt: `Iterate on ${tag} until it is merge-ready. ${ctx} Address open review findings and TODOs, make the test suite and build pass, and tighten edge cases — keep changes surgical. Commit and push your work. End with the final status (tests/build green?) and a short summary of what changed.`,
         }
-  const { steps, persona, pipeline } = buildSteps(repoRoot, base, personaId, pipelineId)
+  const { steps, persona, pipeline } = buildSteps(
+    repoRoot,
+    base,
+    personaId,
+    pipelineId,
+    auto ? autoRole : undefined,
+  )
   return runSpec(repoRoot, {
     id: `pr-${kind}-${pr.iid}`,
     title: `${kind === 'review' ? 'Review' : 'Iterate'} ${f.sym}${pr.iid}`,
     steps,
-    engine,
+    engine: auto ? roleRouting(autoRole).engine : engine,
     persona,
     pipeline,
     prRef: { iid: pr.iid, sourceBranch: pr.sourceBranch },
-    model,
+    model: auto ? undefined : model,
   })
 }
 

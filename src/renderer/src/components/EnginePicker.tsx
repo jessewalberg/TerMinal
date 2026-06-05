@@ -18,7 +18,7 @@ import {
   Layers,
   type LucideIcon,
 } from 'lucide-react'
-import type { Engine, Persona, PipelineInfo, EnvDetect } from '../lib/types'
+import type { Engine, EnginePick, Persona, PipelineInfo, EnvDetect, Settings } from '../lib/types'
 import { EngineModelPicker } from './EngineModelPicker'
 import { SkillHint } from './SkillHint'
 import openaiLogo from '../assets/openai.svg'
@@ -59,21 +59,25 @@ export function EnginePicker({
 }: {
   title: string
   hint?: ReactNode
-  onPick: (engine: Engine, persona: string, pipeline: string, model?: string) => void
+  onPick: (engine: EnginePick, persona: string, pipeline: string, model?: string) => void
   onClose: () => void
 }) {
-  const [engine, setEngine] = useState<Engine | null>(null)
+  const [engine, setEngine] = useState<EnginePick | null>(null)
   const [model, setModel] = useState<string | undefined>(undefined)
   const [persona, setPersona] = useState<string | null>(null) // null = not chosen, '' = none
   const [personas, setPersonas] = useState<Persona[]>([])
   const [pipelines, setPipelines] = useState<PipelineInfo[]>([])
   const [env, setEnv] = useState<EnvDetect | null>(null)
   const [defaultEngine, setDefaultEngine] = useState<Engine>('claude')
+  const [roles, setRoles] = useState<Settings['roles'] | null>(null)
   useEffect(() => {
     window.gt.agents.personas().then(setPersonas)
     window.gt.agents.pipelines().then(setPipelines)
     window.gt.detectEnv().then(setEnv)
-    window.gt.settings.get().then((s) => setDefaultEngine(s.defaultEngine))
+    window.gt.settings.get().then((s) => {
+      setDefaultEngine(s.defaultEngine)
+      setRoles(s.roles)
+    })
   }, [])
 
   // Until detection resolves, assume available (avoids a flicker); once known,
@@ -122,6 +126,30 @@ export function EnginePicker({
         {step === 1 && (
           <>
             <p className="mb-3 text-[11.5px] text-zinc-500">1 · Launch with which engine?</p>
+            <button
+              onClick={() => roles && avail(roles.code.engine) && setEngine('auto')}
+              disabled={!roles || !avail(roles.code.engine)}
+              title={
+                roles && !avail(roles.code.engine)
+                  ? `role policy needs ${roles.code.engine}, which is not installed`
+                  : 'Role routing decides: the work runs on the code-role engine; review stages route separately (reviewer ≠ implementer)'
+              }
+              className={`mb-2 flex w-full items-center gap-2.5 rounded-xl border bg-black/20 p-3 text-left transition-colors ${
+                roles && avail(roles.code.engine)
+                  ? 'border-[var(--gt-accent)]/40 hover:border-[var(--gt-accent)] hover:bg-white/5'
+                  : 'cursor-not-allowed border-[var(--gt-border)]/50 opacity-40'
+              }`}
+            >
+              <Zap size={17} strokeWidth={1.75} className="shrink-0 text-[var(--gt-accent-light)]" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-semibold text-zinc-100">Auto · role routing</div>
+                <div className="text-[11px] text-zinc-500">
+                  {roles
+                    ? `${roles.code.engine} does the work · ${roles.review.engine} reviews`
+                    : 'loading role policy…'}
+                </div>
+              </div>
+            </button>
             <div className="grid grid-cols-3 gap-2">
               {engineOrder.map((e) => {
                 const ok = avail(e)
@@ -157,20 +185,23 @@ export function EnginePicker({
           <>
             <div className="mb-3 flex items-center gap-2">
               <p className="text-[11.5px] text-zinc-500">
-                2 · Run as a persona? <span className="text-zinc-600">(via {engine})</span>
+                2 · Run as a persona?{' '}
+                <span className="text-zinc-600">(via {engine === 'auto' ? 'role routing' : engine})</span>
               </p>
-              <div className="ml-auto">
-                <EngineModelPicker
-                  engine={engine as Engine}
-                  model={model}
-                  onChange={(e, m) => {
-                    setEngine(e)
-                    setModel(m)
-                  }}
-                  size="sm"
-                  align="right"
-                />
-              </div>
+              {engine !== 'auto' && (
+                <div className="ml-auto">
+                  <EngineModelPicker
+                    engine={engine as Engine}
+                    model={model}
+                    onChange={(e, m) => {
+                      setEngine(e)
+                      setModel(m)
+                    }}
+                    size="sm"
+                    align="right"
+                  />
+                </div>
+              )}
             </div>
             <div className="max-h-[320px] space-y-1.5 overflow-y-auto">
               <button
@@ -218,7 +249,7 @@ export function EnginePicker({
                 return (
                   <button
                     key={pl.id}
-                    onClick={() => onPick(engine as Engine, persona ?? '', pl.id, model)}
+                    onClick={() => onPick(engine as EnginePick, persona ?? '', pl.id, engine === 'auto' ? undefined : model)}
                     className="flex w-full items-center gap-2.5 rounded-xl border border-[var(--gt-border)] bg-black/20 p-3 text-left transition-colors hover:border-[var(--gt-accent)]/60 hover:bg-white/5"
                   >
                     <Icon size={17} strokeWidth={1.75} className="shrink-0 text-[var(--gt-accent-light)]" />

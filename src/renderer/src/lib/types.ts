@@ -139,6 +139,8 @@ export type SessionEngine = Engine | 'local'
 export type EngineCfg = { path: string; defaultModel: string }
 // Task-first role routing: which engine+model runs each task stage.
 export type RoleId = 'plan' | 'code' | 'review' | 'verify'
+/** A launcher's engine choice: concrete engine, or 'auto' = role policy decides. */
+export type EnginePick = Engine | 'auto'
 export type RoleCfg = { engine: Engine; model: string }
 export type TaskFlowCfg = { verify: 'heavy' | 'always' | 'never'; planGate: boolean }
 export type ForgePref = 'auto' | 'github' | 'gitlab'
@@ -671,14 +673,14 @@ export type GtApi = {
     pipelines: () => Promise<PipelineInfo[]>
     run: (
       id: string,
-      engine?: Engine,
+      engine?: EnginePick,
       persona?: string,
       pipeline?: string,
       model?: string,
     ) => Promise<AgentRun | { error: string }>
     runTicket: (
       slug: string,
-      engine: Engine,
+      engine: EnginePick,
       persona?: string,
       pipeline?: string,
       model?: string,
@@ -686,7 +688,7 @@ export type GtApi = {
     runPr: (
       pr: { iid: number; sourceBranch: string; title?: string; webUrl?: string },
       kind: 'review' | 'iterate',
-      engine: Engine,
+      engine: EnginePick,
       persona?: string,
       pipeline?: string,
       model?: string,

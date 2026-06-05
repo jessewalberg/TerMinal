@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Eye, Repeat2, Check, type LucideIcon } from 'lucide-react'
 import { EnginePicker } from './EnginePicker'
-import type { Engine } from '../lib/types'
+import type { Engine, EnginePick } from '../lib/types'
 
 // Spin a Codex/Claude agent out onto an open MR: Review or Iterate. The agent
 // checks out the MR head in its own worktree and pushes fixes back to the
@@ -12,7 +12,7 @@ export function PrAgentActions({ pr, sym = '!' }: { pr: PrLite; sym?: string }) 
   const [kind, setKind] = useState<'review' | 'iterate' | null>(null)
   const [done, setDone] = useState<{ msg: string; ok: boolean } | null>(null)
 
-  const launch = async (engine: Engine, persona: string, pipeline: string, model?: string) => {
+  const launch = async (engine: EnginePick, persona: string, pipeline: string, model?: string) => {
     const k = kind
     setKind(null)
     if (!k) return
