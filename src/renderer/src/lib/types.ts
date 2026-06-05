@@ -137,6 +137,10 @@ export type DocsTree = {
 export type Engine = 'codex' | 'claude' | 'cursor'
 export type SessionEngine = Engine | 'local'
 export type EngineCfg = { path: string; defaultModel: string }
+// Task-first role routing: which engine+model runs each task stage.
+export type RoleId = 'plan' | 'code' | 'review' | 'verify'
+export type RoleCfg = { engine: Engine; model: string }
+export type TaskFlowCfg = { verify: 'heavy' | 'always' | 'never'; planGate: boolean }
 export type ForgePref = 'auto' | 'github' | 'gitlab'
 export type TelegramCfg = { notify: boolean; control: boolean; botToken: string; chatId: string }
 export type AppsCfg = { editor: string; browser: string }
@@ -156,12 +160,18 @@ export type Settings = {
   maxRunMs: number // per-run soft wall-clock cap (ms); 0 = off, default 3h
   maxRunHardMs: number // per-run HARD cap (ms): SIGTERM when exceeded; 0 = off
   hiddenRepos: string[] // repos manually hidden from the fleet inventory (#14)
+  roles: Record<RoleId, RoleCfg> // task-stage routing (plan/code/review/verify)
+  taskFlow: TaskFlowCfg
 }
-export type SettingsPatch = Partial<Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter'>> & {
+export type SettingsPatch = Partial<
+  Omit<Settings, 'telegram' | 'engines' | 'apps' | 'openrouter' | 'roles' | 'taskFlow'>
+> & {
   telegram?: Partial<TelegramCfg>
   engines?: Partial<Record<Engine, Partial<EngineCfg>>>
   apps?: Partial<AppsCfg>
   openrouter?: Partial<OpenRouterCfg>
+  roles?: Partial<Record<RoleId, Partial<RoleCfg>>>
+  taskFlow?: Partial<TaskFlowCfg>
 }
 
 /** Result of validating a projectsDir candidate (settings:validateProjectsDir).
@@ -227,6 +237,8 @@ export type AgentRun = {
   output: string
   /** Snapshot at run-time of the agent's force flag. */
   force?: boolean
+  stepEngines?: Engine[] // per-step engines for multi-engine task runs
+  gateWaiting?: boolean // parked at a plan-approval gate (resumable)
 }
 
 export type ScheduleSpec =
@@ -345,6 +357,8 @@ export type UnifiedRun = {
   error?: string
   /** Snapshot at run-time of the agent's force flag. */
   force?: boolean
+  stepEngines?: string[] // per-step engines for multi-engine task runs
+  gateWaiting?: boolean // parked at a plan-approval gate (resumable)
 }
 
 export type CronRun = {
@@ -679,6 +693,7 @@ export type GtApi = {
     ) => Promise<AgentRun | { error: string }>
     runs: () => Promise<AgentRun[]>
     cancel: (runId: string) => Promise<boolean>
+    resumeGate: (runId: string) => Promise<boolean>
     removeWorktree: (runId: string) => Promise<boolean>
     rerun: (run: UnifiedRun) => Promise<{ ok: true; runId?: string } | { error: string }>
     onStatus: (cb: (run: AgentRun) => void) => () => void
@@ -707,6 +722,10 @@ export type GtApi = {
     disabledToggle: (id: string, disabled: boolean) => Promise<string[]>
     disabledAll: (disabled: boolean) => Promise<string[]>
     design: (text: string, engine: Engine) => Promise<AgentRun | { error: string }>
+  }
+  tasks: {
+    /** Task-first entry: freeform prompt → role-routed plan/code/review/verify run. */
+    start: (repoRoot: string, text: string) => Promise<AgentRun | { error: string }>
   }
   hitl: {
     list: () => Promise<HitlItem[]>

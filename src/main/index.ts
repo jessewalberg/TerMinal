@@ -96,6 +96,8 @@ import {
   readAgentRunLog,
   cancelRun,
   removeWorktree,
+  runTask,
+  resumeGate,
   onAgentEvent,
   loadPersistedRuns,
   type Engine,
@@ -704,6 +706,19 @@ ipcMain.handle('agents:cancel', (_e, runId: string) => {
   sendRunsChanged()
   return canceled
 })
+// Task-first entry: a freeform prompt becomes a role-routed pipeline run.
+// repoRoot comes from the composer (last-used default + explicit switch),
+// NOT the active session cwd — starting a task must not require a session.
+ipcMain.handle('tasks:start', (_e, repoRoot: string, text: string) => {
+  const r = runTask(repoRoot, text)
+  if (!('error' in r)) sendRunsChanged()
+  return r
+})
+ipcMain.handle('agents:resume-gate', (_e, runId: string) => {
+  const ok = resumeGate(runId)
+  if (ok) sendRunsChanged()
+  return ok
+})
 ipcMain.handle('agents:remove-worktree', (_e, runId: string) => removeWorktree(runId))
 // Schedules are backed by real launchd jobs; every mutation syncs launchd in
 // lockstep, and `enriched` annotates each with its human cadence + next fire.
@@ -821,7 +836,15 @@ ipcMain.handle('schedules:reconcile', () => reconcileSchedules())
 // Global HITL inbox (cross-repo). Filing fires a blocked notification (TG + macOS).
 ipcMain.handle('hitl:list', () => readHitl())
 ipcMain.handle('hitl:file', (_e, item: Omit<HitlItem, 'id' | 'status' | 'createdAt'>) => fileHitl(item))
-ipcMain.handle('hitl:resolve', (_e, id: string, resolved?: boolean) => resolveHitl(id, resolved ?? true))
+ipcMain.handle('hitl:resolve', (_e, id: string, resolved?: boolean) => {
+  const item = readHitl().find((i) => i.id === id)
+  const ok = resolveHitl(id, resolved ?? true)
+  // Plan-gate handoff: resolving a gate item resumes the parked run.
+  // resumeGate is a no-op for runs that are not parked, so unrelated
+  // run-linked HITLs resolve harmlessly.
+  if (ok && resolved !== false && item?.runId && item.runSource === 'agent') resumeGate(item.runId)
+  return ok
+})
 ipcMain.handle('hitl:remove', (_e, id: string) => removeHitl(id))
 // Factory: read-only cross-repo health roll-up + start the orchestrator in-place.
 ipcMain.handle('factory:health', () => factoryHealth())

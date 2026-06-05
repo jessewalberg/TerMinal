@@ -148,6 +148,11 @@ export type UnifiedRun = {
   scheduleId?: string
   error?: string
   force?: boolean
+  /** Per-step resolved engines for multi-engine task runs (chip row in the
+   *  Runs tab — the single `engine` field would mislabel these). */
+  stepEngines?: string[]
+  /** Parked at a plan-approval gate (agent runs only) — resumable. */
+  gateWaiting?: boolean
 }
 
 function agentRunToUnified(r: AgentRun): UnifiedRun {
@@ -168,6 +173,8 @@ function agentRunToUnified(r: AgentRun): UnifiedRun {
     persona: r.persona,
     pipeline: r.pipeline,
     force: r.force,
+    stepEngines: r.stepEngines,
+    gateWaiting: r.gateWaiting,
   }
 }
 

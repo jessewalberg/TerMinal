@@ -86,6 +86,7 @@ const gt = {
     ) => ipcRenderer.invoke('agents:run-pr', pr, kind, engine, persona, pipeline, model),
     runs: () => ipcRenderer.invoke('agents:runs'),
     cancel: (runId: string) => ipcRenderer.invoke('agents:cancel', runId),
+    resumeGate: (runId: string) => ipcRenderer.invoke('agents:resume-gate', runId),
     removeWorktree: (runId: string) => ipcRenderer.invoke('agents:remove-worktree', runId),
     rerun: (run: unknown) => ipcRenderer.invoke('runs:rerun', run),
     onStatus: (cb: (run: unknown) => void) => {
@@ -121,6 +122,9 @@ const gt = {
       ipcRenderer.invoke('schedules:disabled-toggle', id, disabled),
     disabledAll: (disabled: boolean) => ipcRenderer.invoke('schedules:disabled-all', disabled),
     design: (text: string, engine: string) => ipcRenderer.invoke('schedules:design', text, engine),
+  },
+  tasks: {
+    start: (repoRoot: string, text: string) => ipcRenderer.invoke('tasks:start', repoRoot, text),
   },
   hitl: {
     list: () => ipcRenderer.invoke('hitl:list'),
