@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { spawn as cpSpawn } from 'node:child_process'
 import { execSync } from 'node:child_process'
 import { fileHitl } from './hitl'
-import { enginePath, resolvedWorktreesDir } from './settings'
+import { enginePath, engineDefaultModel, resolvedWorktreesDir } from './settings'
 
 const CFG = join(homedir(), '.config', 'TerMinal')
 const TASKS_FILE = join(CFG, 'bg-tasks.json')
@@ -93,6 +93,34 @@ export type SpawnBgInput = {
   model?: string
 }
 
+/**
+ * Pure construction of the background-task CLI argv (no shell — spawned via
+ * child_process with an args array). The resolved binary and the already-
+ * resolved model are injected: engine→executable resolution (enginePath) and
+ * the per-engine model fallback (engineDefaultModel) are the impure caller's
+ * job, so this stays unit-testable without touching settings on disk. Mirrors
+ * engine-cmd.ts's buildEngineCmd convention.
+ *
+ * A truthy model is appended as `--model <model>` for every engine (matching
+ * the prior append-at-end behavior); falsy lets the engine pick its own.
+ */
+export function buildBgArgv(
+  binPath: string,
+  engine: 'claude' | 'codex' | 'cursor',
+  prompt: string,
+  worktree: string,
+  model?: string,
+): string[] {
+  const argv =
+    engine === 'claude'
+      ? [binPath, '-p', prompt, '--dangerously-skip-permissions']
+      : engine === 'cursor'
+        ? [binPath, '-p', prompt, '--force', '--workspace', worktree]
+        : [binPath, 'exec', '-s', 'danger-full-access', '-C', worktree, prompt]
+  if (model) argv.push('--model', model)
+  return argv
+}
+
 export function spawnBgTask(input: SpawnBgInput): BgTask | { error: string } {
   if (!input.repoRoot || !existsSync(input.repoRoot)) return { error: 'invalid repoRoot' }
   if (!input.prompt?.trim()) return { error: 'empty prompt' }
@@ -146,13 +174,13 @@ export function spawnBgTask(input: SpawnBgInput): BgTask | { error: string } {
     `When you're done, if you opened a PR/MR include its URL on a line by itself in the format:\nMR: <url>\n` +
     `If you couldn't complete the task, say so on a line starting with:\nFAILED: <one-line reason>`
 
-  const cmd =
-    engine === 'claude'
-      ? [enginePath('claude'), '-p', enrichedPrompt, '--dangerously-skip-permissions']
-      : engine === 'cursor'
-        ? [enginePath('cursor'), '-p', enrichedPrompt, '--force', '--workspace', worktree]
-        : [enginePath('codex'), 'exec', '-s', 'danger-full-access', '-C', worktree, enrichedPrompt]
-  if (input.model) cmd.push('--model', input.model)
+  // Resolve model in priority order: explicit input override > per-engine
+  // Settings default > nothing (engine picks its own default). Same value
+  // flows into the --model argv, the TERMINAL_MODEL env (visible to the child),
+  // and the persisted task record — exact parity with the in-process path
+  // (agents.ts: `spec.model || engineDefaultModel(spec.engine) || ''`).
+  const model = input.model || engineDefaultModel(engine) || undefined
+  const cmd = buildBgArgv(enginePath(engine), engine, enrichedPrompt, worktree, model)
 
   // Pipe stdout/stderr to the log file. Detached so it survives parent exit.
   const out = require('node:fs').openSync(logFile, 'w')
@@ -170,7 +198,7 @@ export function spawnBgTask(input: SpawnBgInput): BgTask | { error: string } {
       TERMINAL_BRANCH: branch,
       TERMINAL_WORKTREE: worktree,
       TERMINAL_ENGINE: engine,
-      ...(input.model ? { TERMINAL_MODEL: input.model } : {}),
+      ...(model ? { TERMINAL_MODEL: model } : {}),
     },
   })
   child.unref()
@@ -181,7 +209,7 @@ export function spawnBgTask(input: SpawnBgInput): BgTask | { error: string } {
     repoRoot: input.repoRoot,
     prompt: input.prompt,
     engine,
-    model: input.model,
+    model,
     worktree,
     branch,
     pid: child.pid || undefined,
