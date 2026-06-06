@@ -408,21 +408,36 @@ function updateTicket(args) {
   }
   if (!path) {
     // No view file anywhere — a vault-mode ticket can exist before the
-    // projection regenerates (file_ticket → immediate update_ticket):
-    // resolve by source_id across marker-branded repos (review finding).
+    // projection regenerates (file_ticket → immediate update_ticket).
+    // source_id is per PROJECT, so the same NNNN exists in many repos:
+    // disambiguate by the slug's title suffix (both sides use the same
+    // slugify) and REFUSE on zero or multiple matches (review finding —
+    // first-match patched the wrong repo's task).
     const srcId = parseInt(slug.slice(0, 4), 10)
-    if (Number.isFinite(srcId)) {
+    const suffix = slug.slice(5)
+    if (Number.isFinite(srcId) && suffix) {
+      const candidates = []
       for (const root of knownRepoRoots()) {
         if (!hasProjectionMarker(join(root, 'backlog'))) continue
         const route = resolveRoute(root, readSettings() ?? {}, process.env)
         if (route.mode !== 'vault') continue
         const vaultTask = findVaultTaskBySourceId(route.vaultPath, route.slug, srcId)
-        if (vaultTask) {
-          if (!updateTicketFile(vaultTask, { status, priority, appendPrUrl, removePrUrl })) {
-            throw new Error(`malformed frontmatter in ${vaultTask}`)
-          }
-          return { ok: true, path: vaultTask }
+        if (!vaultTask) continue
+        try {
+          const h1 = readFileSync(vaultTask, 'utf8').match(/^# (.+)$/m)?.[1] ?? ''
+          if (slugify(h1) === suffix) candidates.push(vaultTask)
+        } catch {
+          /* unreadable — not a candidate */
         }
+      }
+      if (candidates.length === 1) {
+        if (!updateTicketFile(candidates[0], { status, priority, appendPrUrl, removePrUrl })) {
+          throw new Error(`malformed frontmatter in ${candidates[0]}`)
+        }
+        return { ok: true, path: candidates[0] }
+      }
+      if (candidates.length > 1) {
+        throw new Error(`ticket ${slug} is ambiguous across ${candidates.length} projected repos — regenerate the projection or patch the vault task directly`)
       }
     }
     throw new Error(`ticket ${slug} not found in any known repo`)
