@@ -406,7 +406,27 @@ function updateTicket(args) {
       break
     }
   }
-  if (!path) throw new Error(`ticket ${slug} not found in any known repo`)
+  if (!path) {
+    // No view file anywhere — a vault-mode ticket can exist before the
+    // projection regenerates (file_ticket → immediate update_ticket):
+    // resolve by source_id across marker-branded repos (review finding).
+    const srcId = parseInt(slug.slice(0, 4), 10)
+    if (Number.isFinite(srcId)) {
+      for (const root of knownRepoRoots()) {
+        if (!hasProjectionMarker(join(root, 'backlog'))) continue
+        const route = resolveRoute(root, readSettings() ?? {}, process.env)
+        if (route.mode !== 'vault') continue
+        const vaultTask = findVaultTaskBySourceId(route.vaultPath, route.slug, srcId)
+        if (vaultTask) {
+          if (!updateTicketFile(vaultTask, { status, priority, appendPrUrl, removePrUrl })) {
+            throw new Error(`malformed frontmatter in ${vaultTask}`)
+          }
+          return { ok: true, path: vaultTask }
+        }
+      }
+    }
+    throw new Error(`ticket ${slug} not found in any known repo`)
+  }
   // Vault-mode (ADR-0002): a projected ticket's filename carries the
   // source_id — patch the vault task that owns it, never the view.
   const backlogDir = dirname(path)
