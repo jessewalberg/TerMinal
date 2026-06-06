@@ -16,6 +16,10 @@ extraResources:
     to: terminal-cli
   - from: bin/terminal-mcp-server
     to: terminal-mcp-server
+  # terminal-cli + terminal-mcp-server import ./lib/backlog-core.mjs relative
+  # to themselves; installBinLib() copies Resources/lib → ~/.config/TerMinal/bin/lib
+  - from: bin/lib
+    to: lib
 # node-pty ships a native .node binary that can't live inside the asar archive.
 asarUnpack:
   - '**/node_modules/node-pty/**'
