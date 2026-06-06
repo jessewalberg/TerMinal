@@ -23,10 +23,14 @@
 // State file path is ~/.config/TerMinal/agent-state/<repo-basename>/<agent-id>.json
 // (state lives outside the repo so cron runs don't dirty the working tree).
 //
-// SELF-CONTAINED: no imports from the TerMinal app bundle, only ~/.config/TerMinal/*.
+// SELF-CONTAINED: no imports from the TerMinal app bundle — only
+// ~/.config/TerMinal/* and ./lib/* (which the installer ships alongside).
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from 'node:fs'
 import { join, basename, dirname } from 'node:path'
+// Consolidated ticket writer — installed alongside this script (bin/lib/),
+// so the relative import resolves both in-repo and at ~/.config/TerMinal/bin.
+import { createTicketFile } from './lib/backlog-core.mjs'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { execSync, execFile, execFileSync } from 'node:child_process'
@@ -645,32 +649,15 @@ function fileTicket(title, body) {
     console.error(`terminal-cli ticket: ${backlog} does not exist in this repo`)
     process.exit(2)
   }
-  const files = readdirSync(backlog).filter((f) => /^\d{4}-.*\.md$/.test(f))
-  const maxId = files.reduce((m, f) => Math.max(m, parseInt(f.slice(0, 4), 10)), 0)
-  const id = String(maxId + 1).padStart(4, '0')
-  const slug =
-    (title || 'untitled')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 50) || 'untitled'
-  const today = new Date().toISOString().slice(0, 10)
-  const fm = `---
-id: ${id}
-title: ${JSON.stringify(title || 'Untitled')}
-status: open
-priority: medium
-type: feature
-source: script
-created: ${today}
-updated: ${today}
----
-
-${body || ''}
-`
-  const path = join(backlog, `${id}-${slug}.md`)
-  writeFileSync(path, fm)
-  emitActivity('ticket-filed', `Ticket filed · #${id}`, title || '')
+  // Consolidated writer (vault TerMinal-001): one allocator + frontmatter
+  // shape shared with the app and the MCP server — also fixes this path's
+  // string ids and missing hitl/prs/refs/depends_on fields.
+  const { id, path } = createTicketFile(backlog, {
+    title: title || 'Untitled',
+    body: body || '',
+    source: 'script',
+  })
+  emitActivity('ticket-filed', `Ticket filed · #${String(id).padStart(4, '0')}`, title || '')
   console.log(path)
 }
 

@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { createTicketFile, updateTicketFile } from '../../bin/lib/backlog-core.mjs'
 import { parseFrontmatter } from './frontmatter'
 
 // Per-repo backlog: <repoRoot>/backlog/NNNN-slug.md with YAML frontmatter.
@@ -28,6 +29,7 @@ export type NewTicket = {
   priority: string
   status: string
   body: string
+  source?: string
 }
 
 function backlogDir(repoRoot: string): string {
@@ -93,94 +95,29 @@ export function getTicket(repoRoot: string, slug: string): Ticket | null {
   return toTicket(safe, readFileSync(p, 'utf8'))
 }
 
-function slugify(title: string): string {
-  return (
-    title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 50) || 'ticket'
-  )
-}
+// Both mutations delegate to the consolidated writer in
+// bin/lib/backlog-core.mjs — the single allocator + frontmatter shape shared
+// with bin/terminal-mcp-server (file_ticket/update_ticket) and
+// bin/terminal-cli (ticket). See vault task TerMinal-001.
 
-const today = () => new Date().toISOString().slice(0, 10)
-
-// In-place edit of a ticket's frontmatter fields (status/priority), preserving
-// everything else. Scoped to the frontmatter block so body text can't match.
+// In-place edit of a ticket's frontmatter (status/priority/prs list ops),
+// preserving everything else.
 export function updateTicket(
   repoRoot: string,
   slug: string,
-  patch: { status?: string; priority?: string },
+  patch: { status?: string; priority?: string; appendPrUrl?: string; removePrUrl?: string },
 ): boolean {
   const safe = slug.replace(/[^\w-]/g, '')
   const p = join(backlogDir(repoRoot), `${safe}.md`)
   if (!existsSync(p)) return false
-  let md: string
-  try {
-    md = readFileSync(p, 'utf8')
-  } catch {
-    return false
-  }
-  const m = md.match(/^(---\n[\s\S]*?\n---)([\s\S]*)$/)
-  if (!m) return false
-  let fm = m[1]
-  const setField = (key: string, val: string) => {
-    const re = new RegExp(`^(${key}:[ \\t]*).*$`, 'm')
-    if (re.test(fm)) fm = fm.replace(re, `$1${val}`)
-    else fm = fm.replace(/\n---$/, `\n${key}: ${val}\n---`)
-  }
-  if (patch.status) setField('status', patch.status)
-  if (patch.priority) setField('priority', patch.priority)
-  setField('updated', today())
-  try {
-    writeFileSync(p, fm + m[2])
-    return true
-  } catch {
-    return false
-  }
+  return updateTicketFile(p, patch)
 }
 
 export function createTicket(repoRoot: string, input: NewTicket): Ticket {
   const dir = backlogDir(repoRoot)
   if (!existsSync(dir)) throw new Error('no backlog/ in this repo')
-  const nextId = listTickets(repoRoot).reduce((max, t) => Math.max(max, t.id), 0) + 1
-  const num = String(nextId).padStart(4, '0')
-  const slug = `${num}-${slugify(input.title)}`
-  const t: Ticket = {
-    slug,
-    id: nextId,
-    title: input.title,
-    status: input.status || 'open',
-    priority: input.priority || 'medium',
-    horizon: 'now',
-    hitl: false,
-    type: input.type || 'feature',
-    source: 'TerMinal',
-    created: today(),
-    updated: today(),
-    prs: [],
-    refs: [],
-    depends_on: [],
-    body: input.body || '',
-  }
-  const fm = [
-    '---',
-    `id: ${t.id}`,
-    `title: "${t.title.replace(/"/g, "'")}"`,
-    `status: ${t.status}`,
-    `priority: ${t.priority}`,
-    `horizon: ${t.horizon}`,
-    `type: ${t.type}`,
-    `source: ${t.source}`,
-    `created: ${t.created}`,
-    `updated: ${t.updated}`,
-    `prs: []`,
-    `refs: []`,
-    '---',
-    '',
-    t.body.trim(),
-    '',
-  ].join('\n')
-  writeFileSync(join(dir, `${slug}.md`), fm)
-  return t
+  const { slug } = createTicketFile(dir, input)
+  const written = getTicket(repoRoot, slug)
+  if (!written) throw new Error(`ticket ${slug} written but unreadable`)
+  return written
 }

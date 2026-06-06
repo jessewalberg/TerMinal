@@ -15,6 +15,14 @@ export function parseFrontmatter(md: string): { fm: Record<string, unknown>; bod
         .split(',')
         .map((s) => s.trim().replace(/^["']|["']$/g, ''))
         .filter(Boolean)
+    } else if (val.startsWith('"') && val.endsWith('"')) {
+      // writers emit titles via JSON.stringify — JSON-unescape when valid so
+      // quoted characters round-trip; fall back to a naive strip for legacy
+      try {
+        fm[key] = JSON.parse(val)
+      } catch {
+        fm[key] = val.slice(1, -1)
+      }
     } else {
       fm[key] = val.replace(/^["']|["']$/g, '')
     }
