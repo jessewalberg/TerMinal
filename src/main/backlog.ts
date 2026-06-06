@@ -1,6 +1,16 @@
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { createTicketFile, updateTicketFile } from '../../bin/lib/backlog-core.mjs'
+import {
+  createTicketFile,
+  createVaultTicketFile,
+  findVaultTaskBySourceId,
+  hasProjectionMarker,
+  slugify,
+  todayStr,
+  updateTicketFile,
+} from '../../bin/lib/backlog-core.mjs'
+import { resolveRoute } from '../../bin/lib/vault-route.mjs'
 import { parseFrontmatter } from './frontmatter'
 
 // Per-repo backlog: <repoRoot>/backlog/NNNN-slug.md with YAML frontmatter.
@@ -98,7 +108,48 @@ export function getTicket(repoRoot: string, slug: string): Ticket | null {
 // Both mutations delegate to the consolidated writer in
 // bin/lib/backlog-core.mjs — the single allocator + frontmatter shape shared
 // with bin/terminal-mcp-server (file_ticket/update_ticket) and
-// bin/terminal-cli (ticket). See vault task TerMinal-001.
+// bin/terminal-cli (ticket). Cut-over repos (.projection marker, ADR-0002)
+// reroute to the vault. See vault tasks TerMinal-001/003.
+
+type RouteSettings = {
+  vaultPath?: string
+  projectsDir?: string
+  vaultCarveOuts?: { template?: string[]; collaborator?: string[] }
+}
+
+function cfgSettings(): RouteSettings {
+  try {
+    return (
+      JSON.parse(
+        readFileSync(join(homedir(), '.config', 'TerMinal', 'settings.json'), 'utf8'),
+      ) ?? {}
+    )
+  } catch {
+    return {}
+  }
+}
+
+const pad4 = (n: number) => String(n).padStart(4, '0')
+
+function builtTicket(input: NewTicket, id: number, slug: string): Ticket {
+  return {
+    slug,
+    id,
+    title: input.title,
+    status: input.status || 'open',
+    priority: input.priority || 'medium',
+    horizon: 'now',
+    hitl: false,
+    type: input.type || 'feature',
+    source: input.source || 'TerMinal',
+    created: todayStr(),
+    updated: todayStr(),
+    prs: [],
+    refs: [],
+    depends_on: [],
+    body: input.body || '',
+  }
+}
 
 // In-place edit of a ticket's frontmatter (status/priority/prs list ops),
 // preserving everything else.
@@ -106,16 +157,49 @@ export function updateTicket(
   repoRoot: string,
   slug: string,
   patch: { status?: string; priority?: string; appendPrUrl?: string; removePrUrl?: string },
+  settingsOverride?: RouteSettings,
 ): boolean {
+  const dir = backlogDir(repoRoot)
+  if (hasProjectionMarker(dir)) {
+    // Projected view (ADR-0002): the filename's NNNN is the source_id —
+    // patch the owning vault task, never the view.
+    const route = resolveRoute(repoRoot, settingsOverride ?? cfgSettings(), process.env)
+    if (route.mode !== 'vault') return false
+    const srcId = Number.parseInt(slug.slice(0, 4), 10)
+    if (!Number.isFinite(srcId)) return false
+    const vaultTask = findVaultTaskBySourceId(route.vaultPath, route.slug, srcId)
+    return vaultTask ? updateTicketFile(vaultTask, patch) : false
+  }
   const safe = slug.replace(/[^\w-]/g, '')
-  const p = join(backlogDir(repoRoot), `${safe}.md`)
+  const p = join(dir, `${safe}.md`)
   if (!existsSync(p)) return false
   return updateTicketFile(p, patch)
 }
 
-export function createTicket(repoRoot: string, input: NewTicket): Ticket {
+export function createTicket(
+  repoRoot: string,
+  input: NewTicket,
+  settingsOverride?: RouteSettings,
+): Ticket {
   const dir = backlogDir(repoRoot)
   if (!existsSync(dir)) throw new Error('no backlog/ in this repo')
+  if (hasProjectionMarker(dir)) {
+    const route = resolveRoute(repoRoot, settingsOverride ?? cfgSettings(), process.env)
+    if (route.mode !== 'vault') {
+      throw new Error(
+        `backlog/ has a .projection marker but "${route.slug}" is carve-out-listed — fix settings.vaultCarveOuts (ADR-0002)`,
+      )
+    }
+    if (existsSync(route.vaultPath)) {
+      const r = createVaultTicketFile(route, input)
+      return builtTicket(input, r.sourceId, `${pad4(r.sourceId)}-${slugify(input.title)}`)
+    }
+    // Vault unreachable (volume unmounted) — queue atomically, never lose it
+    const pendingDir = join(dir, '.pending')
+    mkdirSync(pendingDir, { recursive: true })
+    const r = createTicketFile(pendingDir, input)
+    return builtTicket(input, r.id, r.slug)
+  }
   const { slug } = createTicketFile(dir, input)
   const written = getTicket(repoRoot, slug)
   if (!written) throw new Error(`ticket ${slug} written but unreadable`)

@@ -1,9 +1,14 @@
 import { test, expect, describe, beforeEach, afterEach } from 'bun:test'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createTicket, getTicket, listTickets, updateTicket } from './backlog'
-import { writeExclusive } from '../../bin/lib/backlog-core.mjs'
+import {
+  createVaultTicketFile,
+  findVaultTaskBySourceId,
+  updateTicketFile,
+  writeExclusive,
+} from '../../bin/lib/backlog-core.mjs'
 
 const ticketMd = (id: number, title: string) =>
   `---\nid: ${id}\ntitle: "${title}"\nstatus: open\npriority: medium\ntype: feature\n---\n\nbody\n`
@@ -164,6 +169,169 @@ describe('writeExclusive (atomic create primitive)', () => {
   })
 })
 
+describe('createVaultTicketFile (vault-mode writer, ADR-0002)', () => {
+  let vault: string
+
+  beforeEach(() => {
+    vault = mkdtempSync(join(tmpdir(), 'gt-vault-'))
+  })
+  afterEach(() => rmSync(vault, { recursive: true, force: true }))
+
+  test('writes a full vault task: 3-digit id, source_id, kind normalization, bare dates', () => {
+    const r = createVaultTicketFile(
+      { vaultPath: vault, slug: 'myrepo' },
+      { title: 'Fix perf path', type: 'perf', priority: 'high', status: 'open', body: 'why text', source: 'mcp' },
+    )
+    expect(r.id).toBe('myrepo-001')
+    expect(r.sourceId).toBe(1)
+    const md = readFileSync(r.path, 'utf8')
+    expect(md).toContain('type: "task"')
+    expect(md).toContain('id: "myrepo-001"')
+    expect(md).toContain('project: "myrepo"')
+    expect(md).toContain('source_id: 1')
+    expect(md).toContain('kind: performance') // perf → performance
+    expect(md).toContain('priority: high')
+    expect(md).toContain('source: mcp')
+    expect(md).toContain('hitl: false')
+    const today = new Date().toISOString().slice(0, 10)
+    expect(md).toContain(`created: ${today}`)
+    expect(md).not.toContain(`created: "${today}"`)
+    expect(md).toContain('# Fix perf path')
+    expect(md).toContain('why text')
+  })
+
+  test('garbage or oversized source_id values in existing tasks never poison allocation', () => {
+    mkdirSync(join(vault, 'Projects', 'myrepo', 'Tasks'), { recursive: true })
+    writeFileSync(
+      join(vault, 'Projects', 'myrepo', 'Tasks', 'myrepo-001.md'),
+      '---\ntype: "task"\nid: "myrepo-001"\nproject: "myrepo"\nstatus: "open"\nhorizon: "now"\nsource_id: 99999999999999\nupdated: 2026-06-06\n---\n\n# Huge\n',
+    )
+    writeFileSync(
+      join(vault, 'Projects', 'myrepo', 'Tasks', 'myrepo-002.md'),
+      '---\ntype: "task"\nid: "myrepo-002"\nproject: "myrepo"\nstatus: "open"\nhorizon: "now"\nsource_id: 7\nupdated: 2026-06-06\n---\n\n# Sane\n',
+    )
+    const r = createVaultTicketFile(
+      { vaultPath: vault, slug: 'myrepo' },
+      { title: 'After garbage', type: 'feature', priority: 'medium', status: 'open', body: '' },
+    )
+    // the 14-digit value is ignored (strict 1-9 digit parse); max sane is 7
+    expect(r.sourceId).toBe(8)
+  })
+
+  test('source_id continues from the project max; vault NNN from the file max', () => {
+    mkdirSync(join(vault, 'Projects', 'myrepo', 'Tasks'), { recursive: true })
+    writeFileSync(
+      join(vault, 'Projects', 'myrepo', 'Tasks', 'myrepo-007.md'),
+      '---\ntype: "task"\nid: "myrepo-007"\nproject: "myrepo"\nstatus: "open"\nhorizon: "now"\nsource_id: 41\nupdated: 2026-06-06\n---\n\n# Existing\n',
+    )
+    const r = createVaultTicketFile(
+      { vaultPath: vault, slug: 'myrepo' },
+      { title: 'Next one', type: 'feature', priority: 'medium', status: 'open', body: '' },
+    )
+    expect(r.id).toBe('myrepo-008')
+    expect(r.sourceId).toBe(42)
+  })
+
+  test('findVaultTaskBySourceId resolves the task file; updateTicketFile patches it', () => {
+    const r = createVaultTicketFile(
+      { vaultPath: vault, slug: 'myrepo' },
+      { title: 'Update me', type: 'bug', priority: 'low', status: 'open', body: '' },
+    )
+    const found = findVaultTaskBySourceId(vault, 'myrepo', r.sourceId)
+    expect(found).toBe(r.path)
+    expect(findVaultTaskBySourceId(vault, 'myrepo', 999)).toBeNull()
+    expect(
+      updateTicketFile(found as string, {
+        status: 'closed',
+        appendPrUrl: 'https://github.com/o/r/pull/3',
+      }),
+    ).toBe(true)
+    const md = readFileSync(r.path, 'utf8')
+    expect(md).toContain('status: "closed"')
+    expect(md).toContain('https://github.com/o/r/pull/3')
+  })
+})
+
+describe('app writers reroute on the projection marker (ADR-0002, all four writers)', () => {
+  let root: string
+  let vault: string
+  const savedEnv = process.env.GT_VAULT_PATH
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'gt-marker-'))
+    vault = mkdtempSync(join(tmpdir(), 'gt-vault-'))
+    mkdirSync(join(root, 'backlog'))
+    writeFileSync(join(root, 'backlog', '.projection'), 'vaultPath: x\n')
+    process.env.GT_VAULT_PATH = vault
+  })
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(vault, { recursive: true, force: true })
+    if (savedEnv === undefined) delete process.env.GT_VAULT_PATH
+    else process.env.GT_VAULT_PATH = savedEnv
+  })
+
+  test('createTicket routes to the vault and returns a projected-shape Ticket', () => {
+    const t = createTicket(root, {
+      title: 'Routed "to" vault',
+      type: 'bug',
+      priority: 'high',
+      status: 'open',
+      body: 'app body',
+    })
+    expect(t.id).toBe(1)
+    expect(t.slug).toMatch(/^0001-routed/)
+    const slug = require('node:path').basename(root)
+    const md = readFileSync(join(vault, 'Projects', slug, 'Tasks', `${slug}-001.md`), 'utf8')
+    expect(md).toContain('source_id: 1')
+    expect(md).toContain('kind: bug')
+    expect(md).toContain('app body')
+    // the read-only view stays untouched
+    expect(readdirSync(join(root, 'backlog')).filter((f) => f.endsWith('.md'))).toHaveLength(0)
+  })
+
+  test('updateTicket patches the owning vault task via source_id', () => {
+    const t = createTicket(root, {
+      title: 'Patch me',
+      type: 'feature',
+      priority: 'medium',
+      status: 'open',
+      body: '',
+    })
+    expect(updateTicket(root, t.slug, { status: 'closed' })).toBe(true)
+    const slug = require('node:path').basename(root)
+    const md = readFileSync(join(vault, 'Projects', slug, 'Tasks', `${slug}-001.md`), 'utf8')
+    expect(md).toContain('status: "closed"')
+  })
+
+  test('marker + carve-out-listed repo is a configuration error, never a view write', () => {
+    const slug = require('node:path').basename(root)
+    expect(() =>
+      createTicket(
+        root,
+        { title: 'X', type: 'feature', priority: 'medium', status: 'open', body: '' },
+        { vaultCarveOuts: { template: [slug] } },
+      ),
+    ).toThrow(/carve-out/)
+    expect(readdirSync(join(root, 'backlog')).filter((f) => f.endsWith('.md'))).toHaveLength(0)
+  })
+
+  test('unreachable vault queues the create to backlog/.pending/', () => {
+    process.env.GT_VAULT_PATH = join(root, 'missing-volume')
+    const t = createTicket(root, {
+      title: 'Queued offline',
+      type: 'feature',
+      priority: 'medium',
+      status: 'open',
+      body: '',
+    })
+    expect(t.slug).toBe('0001-queued-offline')
+    expect(readFileSync(join(root, 'backlog', '.pending', '0001-queued-offline.md'), 'utf8')).toContain(
+      'Queued offline',
+    )
+  })
+})
+
 describe('terminal-cli ticket (process-level contract)', () => {
   test('files a full-superset ticket, prints the path, exit 2 without TERMINAL_REPO', () => {
     const root = mkdtempSync(join(tmpdir(), 'gt-cli-'))
@@ -187,6 +355,57 @@ describe('terminal-cli ticket (process-level contract)', () => {
       env: { ...process.env, TERMINAL_REPO: '', HOME: fakeHome },
     })
     expect(bad.exitCode).toBe(2)
+
+    rmSync(root, { recursive: true, force: true })
+    rmSync(fakeHome, { recursive: true, force: true })
+  })
+
+  test('vault-mode: a projected repo routes the write to the vault (GT_VAULT_PATH)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gt-cli-vm-'))
+    const fakeHome = mkdtempSync(join(tmpdir(), 'gt-home-'))
+    const vault = mkdtempSync(join(tmpdir(), 'gt-vault-'))
+    mkdirSync(join(root, 'backlog'))
+    writeFileSync(join(root, 'backlog', '.projection'), 'vaultPath: x\n')
+    const cli = join(import.meta.dir, '../../bin/terminal-cli')
+
+    const r = Bun.spawnSync(['bun', cli, 'ticket', 'Vault routed', 'body'], {
+      env: { ...process.env, TERMINAL_REPO: root, HOME: fakeHome, GT_VAULT_PATH: vault },
+    })
+    expect(r.exitCode).toBe(0)
+    const outPath = r.stdout.toString().trim()
+    expect(outPath).toContain(join(vault, 'Projects'))
+    const md = readFileSync(outPath, 'utf8')
+    expect(md).toContain('source_id: 1')
+    expect(md).toContain('kind: feature')
+    // nothing written into the read-only view
+    const viewFiles = readdirSync(join(root, 'backlog')).filter((f) => f.endsWith('.md'))
+    expect(viewFiles).toHaveLength(0)
+
+    rmSync(root, { recursive: true, force: true })
+    rmSync(fakeHome, { recursive: true, force: true })
+    rmSync(vault, { recursive: true, force: true })
+  })
+
+  test('vault-mode: unreachable vault queues to backlog/.pending/ with a warning', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gt-cli-pend-'))
+    const fakeHome = mkdtempSync(join(tmpdir(), 'gt-home-'))
+    mkdirSync(join(root, 'backlog'))
+    writeFileSync(join(root, 'backlog', '.projection'), 'vaultPath: x\n')
+    const cli = join(import.meta.dir, '../../bin/terminal-cli')
+
+    const r = Bun.spawnSync(['bun', cli, 'ticket', 'Offline filed', ''], {
+      env: {
+        ...process.env,
+        TERMINAL_REPO: root,
+        HOME: fakeHome,
+        GT_VAULT_PATH: join(root, 'does-not-exist'),
+      },
+    })
+    expect(r.exitCode).toBe(0)
+    expect(r.stderr.toString()).toContain('vault unreachable')
+    const outPath = r.stdout.toString().trim()
+    expect(outPath).toContain(join('backlog', '.pending'))
+    expect(readFileSync(outPath, 'utf8')).toContain('Offline filed')
 
     rmSync(root, { recursive: true, force: true })
     rmSync(fakeHome, { recursive: true, force: true })

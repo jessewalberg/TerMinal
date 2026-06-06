@@ -30,7 +30,12 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rea
 import { join, basename, dirname } from 'node:path'
 // Consolidated ticket writer — installed alongside this script (bin/lib/),
 // so the relative import resolves both in-repo and at ~/.config/TerMinal/bin.
-import { createTicketFile } from './lib/backlog-core.mjs'
+import {
+  createTicketFile,
+  createVaultTicketFile,
+  hasProjectionMarker,
+} from './lib/backlog-core.mjs'
+import { resolveRoute } from './lib/vault-route.mjs'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { execSync, execFile, execFileSync } from 'node:child_process'
@@ -648,6 +653,44 @@ function fileTicket(title, body) {
   if (!existsSync(backlog)) {
     console.error(`terminal-cli ticket: ${backlog} does not exist in this repo`)
     process.exit(2)
+  }
+  // Vault-mode (Cross-Project ADR-0002): a .projection marker brands this
+  // backlog as a read-only view — the write goes to the vault instead.
+  if (hasProjectionMarker(backlog)) {
+    let settings = {}
+    try {
+      settings = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) ?? {}
+    } catch {
+      /* defaults */
+    }
+    const route = resolveRoute(repo, settings, process.env)
+    // The marker is an ABSOLUTE write guard — carve-out-listed + marker is
+    // a configuration conflict, never a view write.
+    if (route.mode !== 'vault') {
+      console.error(`terminal-cli ticket: backlog/ has a .projection marker but "${route.slug}" is carve-out-listed — fix settings.vaultCarveOuts (ADR-0002)`)
+      process.exit(2)
+    }
+    if (existsSync(route.vaultPath)) {
+      const r = createVaultTicketFile(route, {
+        title: title || 'Untitled',
+        body: body || '',
+        source: 'script',
+      })
+      emitActivity('ticket-filed', `Ticket filed · #${String(r.sourceId).padStart(4, '0')}`, title || '')
+      console.log(r.path)
+      return
+    }
+    const pendingDir = join(backlog, '.pending')
+    mkdirSync(pendingDir, { recursive: true })
+    const r = createTicketFile(pendingDir, {
+      title: title || 'Untitled',
+      body: body || '',
+      source: 'script',
+    })
+    console.error('terminal-cli ticket: vault unreachable — queued to backlog/.pending/')
+    emitActivity('error', 'Vault unreachable — ticket queued', title || '')
+    console.log(r.path)
+    return
   }
   // Consolidated writer (vault TerMinal-001): one allocator + frontmatter
   // shape shared with the app and the MCP server — also fixes this path's

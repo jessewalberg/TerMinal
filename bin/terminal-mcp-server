@@ -13,7 +13,15 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 // Consolidated ticket writer — installed alongside this script (bin/lib/),
 // so the relative import resolves both in-repo and at ~/.config/TerMinal/bin.
-import { createTicketFile, updateTicketFile } from './lib/backlog-core.mjs'
+import {
+  createTicketFile,
+  createVaultTicketFile,
+  findVaultTaskBySourceId,
+  hasProjectionMarker,
+  slugify,
+  updateTicketFile,
+} from './lib/backlog-core.mjs'
+import { resolveRoute } from './lib/vault-route.mjs'
 
 const CFG = join(homedir(), '.config', 'TerMinal')
 const SETTINGS_FILE = join(CFG, 'settings.json')
@@ -350,6 +358,30 @@ function fileTicket(args) {
   if (!repoRoot) throw new Error(`no repo matching "${repo}"`)
   const backlogDir = join(repoRoot, 'backlog')
   if (!existsSync(backlogDir)) throw new Error(`${repoRoot}/backlog/ does not exist`)
+  // Vault-mode (Cross-Project ADR-0002): a .projection marker brands this
+  // backlog as a read-only view — the write goes to the vault instead.
+  if (hasProjectionMarker(backlogDir)) {
+    const route = resolveRoute(repoRoot, readSettings() ?? {}, process.env)
+    // The marker is an ABSOLUTE write guard: a carve-out-listed repo with a
+    // marker is a configuration conflict, never a view write.
+    if (route.mode !== 'vault') {
+      throw new Error(`backlog/ has a .projection marker but "${route.slug}" is carve-out-listed — fix settings.vaultCarveOuts (ADR-0002)`)
+    }
+    if (existsSync(route.vaultPath)) {
+      const r = createVaultTicketFile(route, { title, body, type, priority, status, source })
+      const padded = String(r.sourceId).padStart(4, '0')
+      emitActivityRaw({ kind: 'ticket-filed', title: `Ticket filed · #${padded}`, detail: title, repo: basename(repoRoot), repoRoot })
+      // slug keeps the projected backlog shape so update_ticket round-trips
+      // (it derives source_id from the first 4 chars); id stays zero-padded
+      return { slug: `${padded}-${slugify(title)}`, id: padded, path: r.path }
+    }
+    // Vault unreachable (volume unmounted) — queue atomically, warn loudly
+    const pendingDir = join(backlogDir, '.pending')
+    mkdirSync(pendingDir, { recursive: true })
+    const r = createTicketFile(pendingDir, { title, body, type, priority, status, source })
+    emitActivityRaw({ kind: 'error', title: 'Vault unreachable — ticket queued', detail: `${title} → backlog/.pending/`, repo: basename(repoRoot), repoRoot })
+    return { slug: r.slug, id: String(r.id).padStart(4, '0'), path: r.path, pending: true }
+  }
   // Consolidated writer (vault TerMinal-001): one allocator (max of existing
   // files vs .next-id hint, atomic create with reallocation on a lost race)
   // and one frontmatter shape, shared with the app and terminal-cli.
@@ -374,7 +406,60 @@ function updateTicket(args) {
       break
     }
   }
-  if (!path) throw new Error(`ticket ${slug} not found in any known repo`)
+  if (!path) {
+    // No view file anywhere — a vault-mode ticket can exist before the
+    // projection regenerates (file_ticket → immediate update_ticket).
+    // source_id is per PROJECT, so the same NNNN exists in many repos:
+    // disambiguate by the slug's title suffix (both sides use the same
+    // slugify) and REFUSE on zero or multiple matches (review finding —
+    // first-match patched the wrong repo's task).
+    const srcId = parseInt(slug.slice(0, 4), 10)
+    const suffix = slug.slice(5)
+    if (Number.isFinite(srcId) && suffix) {
+      const candidates = []
+      for (const root of knownRepoRoots()) {
+        if (!hasProjectionMarker(join(root, 'backlog'))) continue
+        const route = resolveRoute(root, readSettings() ?? {}, process.env)
+        if (route.mode !== 'vault') continue
+        const vaultTask = findVaultTaskBySourceId(route.vaultPath, route.slug, srcId)
+        if (!vaultTask) continue
+        try {
+          const h1 = readFileSync(vaultTask, 'utf8').match(/^# (.+)$/m)?.[1] ?? ''
+          if (slugify(h1) === suffix) candidates.push(vaultTask)
+        } catch {
+          /* unreadable — not a candidate */
+        }
+      }
+      if (candidates.length === 1) {
+        if (!updateTicketFile(candidates[0], { status, priority, appendPrUrl, removePrUrl })) {
+          throw new Error(`malformed frontmatter in ${candidates[0]}`)
+        }
+        return { ok: true, path: candidates[0] }
+      }
+      if (candidates.length > 1) {
+        throw new Error(`ticket ${slug} is ambiguous across ${candidates.length} projected repos — regenerate the projection or patch the vault task directly`)
+      }
+    }
+    throw new Error(`ticket ${slug} not found in any known repo`)
+  }
+  // Vault-mode (ADR-0002): a projected ticket's filename carries the
+  // source_id — patch the vault task that owns it, never the view.
+  const backlogDir = dirname(path)
+  if (hasProjectionMarker(backlogDir)) {
+    const route = resolveRoute(dirname(backlogDir), readSettings() ?? {}, process.env)
+    if (route.mode !== 'vault') {
+      throw new Error(`backlog/ has a .projection marker but "${route.slug}" is carve-out-listed — fix settings.vaultCarveOuts (ADR-0002)`)
+    }
+    const srcId = parseInt(slug.slice(0, 4), 10)
+    const vaultTask = Number.isFinite(srcId)
+      ? findVaultTaskBySourceId(route.vaultPath, route.slug, srcId)
+      : null
+    if (!vaultTask) throw new Error(`projected ticket ${slug} has no vault task (source_id ${srcId})`)
+    if (!updateTicketFile(vaultTask, { status, priority, appendPrUrl, removePrUrl })) {
+      throw new Error(`malformed frontmatter in ${vaultTask}`)
+    }
+    return { ok: true, path: vaultTask }
+  }
   // Consolidated writer (shared with the app's tickets:update IPC)
   if (!updateTicketFile(path, { status, priority, appendPrUrl, removePrUrl })) {
     throw new Error(`malformed frontmatter in ${path}`)
