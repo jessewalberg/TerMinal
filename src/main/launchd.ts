@@ -56,13 +56,16 @@ export function installRunner(srcPath: string): void {
 // terminal-cli and terminal-mcp-server import ./lib/backlog-core.mjs (the
 // consolidated ticket writer) relative to themselves — ship bin/lib/ next to
 // the installed copies so the import resolves at the deployed path too.
-function installBinLib(srcPath: string): void {
+// Returns whether the lib verifiably landed; callers must NOT replace a
+// working script copy with one whose dependency didn't install.
+function installBinLib(srcPath: string): boolean {
   try {
     const srcLib = join(dirname(srcPath), 'lib')
-    if (!existsSync(srcLib)) return
+    if (!existsSync(srcLib)) return false
     cpSync(srcLib, join(CFG, 'bin', 'lib'), { recursive: true })
+    return existsSync(join(CFG, 'bin', 'lib', 'backlog-core.mjs'))
   } catch {
-    /* best effort */
+    return false
   }
 }
 
@@ -73,10 +76,15 @@ export function installCli(srcPath: string): void {
   try {
     if (!existsSync(srcPath)) return
     mkdirSync(join(CFG, 'bin'), { recursive: true })
+    // lib first: the script imports it at startup (review finding — a
+    // partial deploy must not leave a broken cli at the stable path)
+    if (!installBinLib(srcPath)) {
+      console.error('TerMinal: skipping terminal-cli install — bin/lib missing or uncopyable at source')
+      return
+    }
     const dest = join(CFG, 'bin', 'terminal-cli')
     copyFileSync(srcPath, dest)
     chmodSync(dest, 0o755)
-    installBinLib(srcPath)
   } catch {
     /* best effort */
   }
@@ -88,10 +96,13 @@ export function installMcpServer(srcPath: string): void {
   try {
     if (!existsSync(srcPath)) return
     mkdirSync(join(CFG, 'bin'), { recursive: true })
+    if (!installBinLib(srcPath)) {
+      console.error('TerMinal: skipping terminal-mcp-server install — bin/lib missing or uncopyable at source')
+      return
+    }
     const dest = join(CFG, 'bin', 'terminal-mcp-server')
     copyFileSync(srcPath, dest)
     chmodSync(dest, 0o755)
-    installBinLib(srcPath)
   } catch {
     /* best effort */
   }
