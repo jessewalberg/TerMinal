@@ -113,7 +113,13 @@ function vaultTasksDir(vaultPath, slug) {
 // Writes one vault task with the full ADR-0002 frontmatter. Vault NNN comes
 // from the exactly-3-digit file max (timestamp ids can't poison it);
 // source_id — the projection round-trip key — continues from the project
-// max. Atomic 'wx' create; a lost race increments the local candidate.
+// max with a STRICT 1-9 digit parse (garbage/oversized values are ignored,
+// never propagated). Both maxes are rescanned on every retry: a lost
+// filename race means another writer just landed, and their file carries
+// the source_id that must advance ours — allocating source_id outside the
+// loop could mint duplicates under concurrency (review finding). Local
+// floors keep both ids monotone even against scan-invisible colliders, so
+// the loop always terminates.
 export function createVaultTicketFile(route, input) {
   const { vaultPath, slug } = route
   const tasksDir = vaultTasksDir(vaultPath, slug)
@@ -123,24 +129,27 @@ export function createVaultTicketFile(route, input) {
   const kindRaw = input.type || 'feature'
   const kind = KIND_NORMALIZE[kindRaw] ?? kindRaw
 
-  let maxSource = 0
-  let maxNNN = 0
-  for (const f of readdirSync(tasksDir)) {
-    if (!f.endsWith('.md')) continue
-    const m = f.match(/-(\d{3})\.md$/)
-    if (m) maxNNN = Math.max(maxNNN, parseInt(m[1], 10))
-    try {
-      const sm = readFileSync(join(tasksDir, f), 'utf8').match(/^source_id:\s*(\d+)\s*$/m)
-      if (sm) maxSource = Math.max(maxSource, parseInt(sm[1], 10))
-    } catch {
-      /* unreadable file — skip */
-    }
-  }
-  const sourceId = maxSource + 1
-
   const list = (v) => `[${(v ?? []).map((x) => JSON.stringify(String(x))).join(', ')}]`
-  let nnn = maxNNN + 1
+  let lastNNN = 0
+  let lastSource = 0
   for (;;) {
+    let maxSource = 0
+    let maxNNN = 0
+    for (const f of readdirSync(tasksDir)) {
+      if (!f.endsWith('.md')) continue
+      const m = f.match(/-(\d{3})\.md$/)
+      if (m) maxNNN = Math.max(maxNNN, parseInt(m[1], 10))
+      try {
+        const sm = readFileSync(join(tasksDir, f), 'utf8').match(/^source_id:\s*(\d{1,9})\s*$/m)
+        if (sm) maxSource = Math.max(maxSource, parseInt(sm[1], 10))
+      } catch {
+        /* unreadable file — skip */
+      }
+    }
+    const nnn = Math.max(maxNNN + 1, lastNNN + 1)
+    const sourceId = Math.max(maxSource + 1, lastSource + 1)
+    lastNNN = nnn
+    lastSource = sourceId
     const id = `${slug}-${String(nnn).padStart(3, '0')}`
     const path = join(tasksDir, `${id}.md`)
     const md = [
@@ -181,7 +190,7 @@ export function createVaultTicketFile(route, input) {
     if (writeExclusive(path, md)) {
       return { id, sourceId, path }
     }
-    nnn += 1
+    // lost the race — loop rescans both maxes (the winner's file is visible)
   }
 }
 

@@ -664,29 +664,33 @@ function fileTicket(title, body) {
       /* defaults */
     }
     const route = resolveRoute(repo, settings, process.env)
-    if (route.mode === 'vault') {
-      if (existsSync(route.vaultPath)) {
-        const r = createVaultTicketFile(route, {
-          title: title || 'Untitled',
-          body: body || '',
-          source: 'script',
-        })
-        emitActivity('ticket-filed', `Ticket filed · #${String(r.sourceId).padStart(4, '0')}`, title || '')
-        console.log(r.path)
-        return
-      }
-      const pendingDir = join(backlog, '.pending')
-      mkdirSync(pendingDir, { recursive: true })
-      const r = createTicketFile(pendingDir, {
+    // The marker is an ABSOLUTE write guard — carve-out-listed + marker is
+    // a configuration conflict, never a view write.
+    if (route.mode !== 'vault') {
+      console.error(`terminal-cli ticket: backlog/ has a .projection marker but "${route.slug}" is carve-out-listed — fix settings.vaultCarveOuts (ADR-0002)`)
+      process.exit(2)
+    }
+    if (existsSync(route.vaultPath)) {
+      const r = createVaultTicketFile(route, {
         title: title || 'Untitled',
         body: body || '',
         source: 'script',
       })
-      console.error('terminal-cli ticket: vault unreachable — queued to backlog/.pending/')
-      emitActivity('error', 'Vault unreachable — ticket queued', title || '')
+      emitActivity('ticket-filed', `Ticket filed · #${String(r.sourceId).padStart(4, '0')}`, title || '')
       console.log(r.path)
       return
     }
+    const pendingDir = join(backlog, '.pending')
+    mkdirSync(pendingDir, { recursive: true })
+    const r = createTicketFile(pendingDir, {
+      title: title || 'Untitled',
+      body: body || '',
+      source: 'script',
+    })
+    console.error('terminal-cli ticket: vault unreachable — queued to backlog/.pending/')
+    emitActivity('error', 'Vault unreachable — ticket queued', title || '')
+    console.log(r.path)
+    return
   }
   // Consolidated writer (vault TerMinal-001): one allocator + frontmatter
   // shape shared with the app and the MCP server — also fixes this path's

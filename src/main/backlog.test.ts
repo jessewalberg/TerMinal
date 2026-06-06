@@ -200,6 +200,24 @@ describe('createVaultTicketFile (vault-mode writer, ADR-0002)', () => {
     expect(md).toContain('why text')
   })
 
+  test('garbage or oversized source_id values in existing tasks never poison allocation', () => {
+    mkdirSync(join(vault, 'Projects', 'myrepo', 'Tasks'), { recursive: true })
+    writeFileSync(
+      join(vault, 'Projects', 'myrepo', 'Tasks', 'myrepo-001.md'),
+      '---\ntype: "task"\nid: "myrepo-001"\nproject: "myrepo"\nstatus: "open"\nhorizon: "now"\nsource_id: 99999999999999\nupdated: 2026-06-06\n---\n\n# Huge\n',
+    )
+    writeFileSync(
+      join(vault, 'Projects', 'myrepo', 'Tasks', 'myrepo-002.md'),
+      '---\ntype: "task"\nid: "myrepo-002"\nproject: "myrepo"\nstatus: "open"\nhorizon: "now"\nsource_id: 7\nupdated: 2026-06-06\n---\n\n# Sane\n',
+    )
+    const r = createVaultTicketFile(
+      { vaultPath: vault, slug: 'myrepo' },
+      { title: 'After garbage', type: 'feature', priority: 'medium', status: 'open', body: '' },
+    )
+    // the 14-digit value is ignored (strict 1-9 digit parse); max sane is 7
+    expect(r.sourceId).toBe(8)
+  })
+
   test('source_id continues from the project max; vault NNN from the file max', () => {
     mkdirSync(join(vault, 'Projects', 'myrepo', 'Tasks'), { recursive: true })
     writeFileSync(
@@ -234,27 +252,83 @@ describe('createVaultTicketFile (vault-mode writer, ADR-0002)', () => {
   })
 })
 
-describe('projection marker guards (app writers fail fast)', () => {
+describe('app writers reroute on the projection marker (ADR-0002, all four writers)', () => {
   let root: string
+  let vault: string
+  const savedEnv = process.env.GT_VAULT_PATH
+
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'gt-marker-'))
+    vault = mkdtempSync(join(tmpdir(), 'gt-vault-'))
     mkdirSync(join(root, 'backlog'))
-    writeFileSync(join(root, 'backlog', '.projection'), 'vaultPath: /tmp/v\n')
-    writeFileSync(
-      join(root, 'backlog', '0001-existing.md'),
-      '---\nid: 1\ntitle: "Existing"\nstatus: open\npriority: medium\n---\n\nbody\n',
-    )
+    writeFileSync(join(root, 'backlog', '.projection'), 'vaultPath: x\n')
+    process.env.GT_VAULT_PATH = vault
   })
-  afterEach(() => rmSync(root, { recursive: true, force: true }))
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(vault, { recursive: true, force: true })
+    if (savedEnv === undefined) delete process.env.GT_VAULT_PATH
+    else process.env.GT_VAULT_PATH = savedEnv
+  })
 
-  test('createTicket throws on a projected backlog instead of writing into the view', () => {
+  test('createTicket routes to the vault and returns a projected-shape Ticket', () => {
+    const t = createTicket(root, {
+      title: 'Routed "to" vault',
+      type: 'bug',
+      priority: 'high',
+      status: 'open',
+      body: 'app body',
+    })
+    expect(t.id).toBe(1)
+    expect(t.slug).toMatch(/^0001-routed/)
+    const slug = require('node:path').basename(root)
+    const md = readFileSync(join(vault, 'Projects', slug, 'Tasks', `${slug}-001.md`), 'utf8')
+    expect(md).toContain('source_id: 1')
+    expect(md).toContain('kind: bug')
+    expect(md).toContain('app body')
+    // the read-only view stays untouched
+    expect(readdirSync(join(root, 'backlog')).filter((f) => f.endsWith('.md'))).toHaveLength(0)
+  })
+
+  test('updateTicket patches the owning vault task via source_id', () => {
+    const t = createTicket(root, {
+      title: 'Patch me',
+      type: 'feature',
+      priority: 'medium',
+      status: 'open',
+      body: '',
+    })
+    expect(updateTicket(root, t.slug, { status: 'closed' })).toBe(true)
+    const slug = require('node:path').basename(root)
+    const md = readFileSync(join(vault, 'Projects', slug, 'Tasks', `${slug}-001.md`), 'utf8')
+    expect(md).toContain('status: "closed"')
+  })
+
+  test('marker + carve-out-listed repo is a configuration error, never a view write', () => {
+    const slug = require('node:path').basename(root)
     expect(() =>
-      createTicket(root, { title: 'X', type: 'feature', priority: 'medium', status: 'open', body: '' }),
-    ).toThrow(/read-only projection/)
+      createTicket(
+        root,
+        { title: 'X', type: 'feature', priority: 'medium', status: 'open', body: '' },
+        { vaultCarveOuts: { template: [slug] } },
+      ),
+    ).toThrow(/carve-out/)
+    expect(readdirSync(join(root, 'backlog')).filter((f) => f.endsWith('.md'))).toHaveLength(0)
   })
 
-  test('updateTicket refuses to patch a projected view', () => {
-    expect(updateTicket(root, '0001-existing', { status: 'closed' })).toBe(false)
+  test('unreachable vault queues the create to backlog/.pending/', () => {
+    process.env.GT_VAULT_PATH = join(root, 'missing-volume')
+    const t = createTicket(root, {
+      title: 'Queued offline',
+      type: 'feature',
+      priority: 'medium',
+      status: 'open',
+      body: '',
+    })
+    expect(t.slug).toBe('0001-queued-offline')
+    expect(readFileSync(join(root, 'backlog', '.pending', '0001-queued-offline.md'), 'utf8')).toContain(
+      'Queued offline',
+    )
   })
 })
 

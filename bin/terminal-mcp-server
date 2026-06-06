@@ -18,6 +18,7 @@ import {
   createVaultTicketFile,
   findVaultTaskBySourceId,
   hasProjectionMarker,
+  slugify,
   updateTicketFile,
 } from './lib/backlog-core.mjs'
 import { resolveRoute } from './lib/vault-route.mjs'
@@ -361,21 +362,25 @@ function fileTicket(args) {
   // backlog as a read-only view — the write goes to the vault instead.
   if (hasProjectionMarker(backlogDir)) {
     const route = resolveRoute(repoRoot, readSettings() ?? {}, process.env)
-    if (route.mode === 'vault') {
-      if (existsSync(route.vaultPath)) {
-        const r = createVaultTicketFile(route, { title, body, type, priority, status, source })
-        const padded = String(r.sourceId).padStart(4, '0')
-        emitActivityRaw({ kind: 'ticket-filed', title: `Ticket filed · #${padded}`, detail: title, repo: basename(repoRoot), repoRoot })
-        // id keeps the zero-padded shape (= source_id, the projected NNNN)
-        return { slug: r.id, id: padded, path: r.path }
-      }
-      // Vault unreachable (volume unmounted) — queue atomically, warn loudly
-      const pendingDir = join(backlogDir, '.pending')
-      mkdirSync(pendingDir, { recursive: true })
-      const r = createTicketFile(pendingDir, { title, body, type, priority, status, source })
-      emitActivityRaw({ kind: 'error', title: 'Vault unreachable — ticket queued', detail: `${title} → backlog/.pending/`, repo: basename(repoRoot), repoRoot })
-      return { slug: r.slug, id: String(r.id).padStart(4, '0'), path: r.path, pending: true }
+    // The marker is an ABSOLUTE write guard: a carve-out-listed repo with a
+    // marker is a configuration conflict, never a view write.
+    if (route.mode !== 'vault') {
+      throw new Error(`backlog/ has a .projection marker but "${route.slug}" is carve-out-listed — fix settings.vaultCarveOuts (ADR-0002)`)
     }
+    if (existsSync(route.vaultPath)) {
+      const r = createVaultTicketFile(route, { title, body, type, priority, status, source })
+      const padded = String(r.sourceId).padStart(4, '0')
+      emitActivityRaw({ kind: 'ticket-filed', title: `Ticket filed · #${padded}`, detail: title, repo: basename(repoRoot), repoRoot })
+      // slug keeps the projected backlog shape so update_ticket round-trips
+      // (it derives source_id from the first 4 chars); id stays zero-padded
+      return { slug: `${padded}-${slugify(title)}`, id: padded, path: r.path }
+    }
+    // Vault unreachable (volume unmounted) — queue atomically, warn loudly
+    const pendingDir = join(backlogDir, '.pending')
+    mkdirSync(pendingDir, { recursive: true })
+    const r = createTicketFile(pendingDir, { title, body, type, priority, status, source })
+    emitActivityRaw({ kind: 'error', title: 'Vault unreachable — ticket queued', detail: `${title} → backlog/.pending/`, repo: basename(repoRoot), repoRoot })
+    return { slug: r.slug, id: String(r.id).padStart(4, '0'), path: r.path, pending: true }
   }
   // Consolidated writer (vault TerMinal-001): one allocator (max of existing
   // files vs .next-id hint, atomic create with reallocation on a lost race)
@@ -407,6 +412,9 @@ function updateTicket(args) {
   const backlogDir = dirname(path)
   if (hasProjectionMarker(backlogDir)) {
     const route = resolveRoute(dirname(backlogDir), readSettings() ?? {}, process.env)
+    if (route.mode !== 'vault') {
+      throw new Error(`backlog/ has a .projection marker but "${route.slug}" is carve-out-listed — fix settings.vaultCarveOuts (ADR-0002)`)
+    }
     const srcId = parseInt(slug.slice(0, 4), 10)
     const vaultTask = Number.isFinite(srcId)
       ? findVaultTaskBySourceId(route.vaultPath, route.slug, srcId)

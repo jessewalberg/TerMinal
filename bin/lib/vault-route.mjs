@@ -21,11 +21,15 @@ const SLUG_EXCEPTIONS = {
 }
 
 // Vault slug → candidate checkout-dir basenames (filtered by existence).
+// jessewalberg.com is deliberately ABSENT: the Schema tracks -hitl as a
+// SEPARATE vault project, so each slug projects only to its own checkout
+// (review finding — the ADR's both-checkouts sentence lost to the Schema).
+// howverydareyou keeps both dirs: childcare-transparency is a second
+// checkout of the SAME vault project per the Schema.
 const DIR_CANDIDATES = {
   howwehomeschool: ['howwehomeschool', 'how-we-homeschool'],
   '15five': ['15five', 'weekly-commits'],
   howverydareyou: ['howverydareyou', 'childcare-transparency'],
-  'jessewalberg.com': ['jessewalberg.com', 'jessewalberg.com-hitl'],
 }
 
 export function resolveRoute(repoRoot, settings = {}, env = {}) {

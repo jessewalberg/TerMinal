@@ -56,13 +56,24 @@ describe('vault-route resolveRoute', () => {
 })
 
 describe('vault-route dirsForSlug (reverse map)', () => {
-  test('one-to-many, existence-filtered', () => {
+  test('one-to-many for same-project checkouts, existence-filtered; separate projects stay separate', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'gt-dirs-'))
     mkdirSync(join(tmp, 'jessewalberg.com'))
     mkdirSync(join(tmp, 'jessewalberg.com-hitl'))
+    // -hitl is a SEPARATE vault project (Schema) — each slug projects only
+    // to its own checkout
     expect(dirsForSlug('jessewalberg.com', { projectsDir: tmp })).toEqual([
       join(tmp, 'jessewalberg.com'),
+    ])
+    expect(dirsForSlug('jessewalberg.com-hitl', { projectsDir: tmp })).toEqual([
       join(tmp, 'jessewalberg.com-hitl'),
+    ])
+    // howverydareyou: two checkouts of ONE vault project → both dirs
+    mkdirSync(join(tmp, 'howverydareyou'))
+    mkdirSync(join(tmp, 'childcare-transparency'))
+    expect(dirsForSlug('howverydareyou', { projectsDir: tmp })).toEqual([
+      join(tmp, 'howverydareyou'),
+      join(tmp, 'childcare-transparency'),
     ])
     // candidates that don't exist on disk are filtered out
     expect(dirsForSlug('howwehomeschool', { projectsDir: tmp })).toEqual([])
