@@ -11,6 +11,9 @@ import { readFileSync, readdirSync, existsSync, statSync, writeFileSync, mkdirSy
 import { join, basename, dirname, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
+// Consolidated ticket writer — installed alongside this script (bin/lib/),
+// so the relative import resolves both in-repo and at ~/.config/TerMinal/bin.
+import { createTicketFile, updateTicketFile } from './lib/backlog-core.mjs'
 
 const CFG = join(homedir(), '.config', 'TerMinal')
 const SETTINGS_FILE = join(CFG, 'settings.json')
@@ -331,14 +334,6 @@ function aiSpendToday(args) {
 // WRITE TOOLS — deterministic data filing. Agents skip reading SKILL.md.
 // ===========================================================================
 
-const todayStr = () => new Date().toISOString().slice(0, 10)
-const slugify = (s) =>
-  s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 50) || 'untitled'
-
 // --- file_ticket ----------------------------------------------------------
 
 function fileTicket(args) {
@@ -348,48 +343,15 @@ function fileTicket(args) {
   if (!repoRoot) throw new Error(`no repo matching "${repo}"`)
   const backlogDir = join(repoRoot, 'backlog')
   if (!existsSync(backlogDir)) throw new Error(`${repoRoot}/backlog/ does not exist`)
-  // Atomic-ish ID allocation via .next-id (matches bin/next-backlog-id semantics)
-  const nextIdFile = join(backlogDir, '.next-id')
-  let nextId = 1
-  if (existsSync(nextIdFile)) {
-    try {
-      nextId = parseInt(readFileSync(nextIdFile, 'utf8').trim(), 10) || 1
-    } catch {}
-  } else {
-    // Fall back to highest existing + 1
-    const files = readdirSync(backlogDir).filter((f) => /^\d{4}-.*\.md$/.test(f))
-    nextId = files.reduce((m, f) => Math.max(m, parseInt(f.slice(0, 4), 10)), 0) + 1
-  }
-  const id = String(nextId).padStart(4, '0')
-  const slug = `${id}-${slugify(title)}`
-  const today = todayStr()
-  const frontmatter = `---
-id: ${nextId}
-title: ${JSON.stringify(title)}
-status: ${status}
-priority: ${priority}
-horizon: now
-hitl: false
-type: ${type}
-source: ${source}
-created: ${today}
-updated: ${today}
-prs: []
-refs: []
-depends_on: []
----
-
-${body}
-`
-  const path = join(backlogDir, `${slug}.md`)
-  writeFileSync(path, frontmatter)
-  // Bump .next-id
-  try {
-    writeFileSync(nextIdFile, String(nextId + 1) + '\n')
-  } catch {}
+  // Consolidated writer (vault TerMinal-001): one allocator (max of existing
+  // files vs .next-id hint, atomic create with reallocation on a lost race)
+  // and one frontmatter shape, shared with the app and terminal-cli.
+  const { slug, id, path } = createTicketFile(backlogDir, { title, body, type, priority, status, source })
+  const padded = String(id).padStart(4, '0')
   // Emit activity event so the harness picks it up
-  emitActivityRaw({ kind: 'ticket-filed', title: `Ticket filed · #${id}`, detail: title, repo: basename(repoRoot), repoRoot })
-  return { slug, id, path }
+  emitActivityRaw({ kind: 'ticket-filed', title: `Ticket filed · #${padded}`, detail: title, repo: basename(repoRoot), repoRoot })
+  // id stays the zero-padded string this tool has always returned
+  return { slug, id: padded, path }
 }
 
 // --- update_ticket --------------------------------------------------------
@@ -398,49 +360,18 @@ function updateTicket(args) {
   const { slug, status, priority, appendPrUrl, removePrUrl } = args
   if (!slug) throw new Error('slug is required')
   let path = null
-  let repoRoot = null
   for (const root of knownRepoRoots()) {
     const p = join(root, 'backlog', `${slug}.md`)
     if (existsSync(p)) {
       path = p
-      repoRoot = root
       break
     }
   }
   if (!path) throw new Error(`ticket ${slug} not found in any known repo`)
-  let raw = readFileSync(path, 'utf8')
-  const m = raw.match(/^(---\n[\s\S]*?\n---)([\s\S]*)$/)
-  if (!m) throw new Error(`malformed frontmatter in ${path}`)
-  let fm = m[1]
-  const setField = (key, val) => {
-    const re = new RegExp(`^(${key}:[ \\t]*).*$`, 'm')
-    if (re.test(fm)) fm = fm.replace(re, `$1${val}`)
-    else fm = fm.replace(/\n---$/, `\n${key}: ${val}\n---`)
+  // Consolidated writer (shared with the app's tickets:update IPC)
+  if (!updateTicketFile(path, { status, priority, appendPrUrl, removePrUrl })) {
+    throw new Error(`malformed frontmatter in ${path}`)
   }
-  if (status) setField('status', status)
-  if (priority) setField('priority', priority)
-  setField('updated', todayStr())
-  // PR URL list manipulation — `prs:` is a YAML inline list
-  if (appendPrUrl || removePrUrl) {
-    const prsMatch = fm.match(/^prs:\s*(.*)$/m)
-    let prs = []
-    if (prsMatch) {
-      const raw = prsMatch[1].trim()
-      if (raw.startsWith('[') && raw.endsWith(']')) {
-        prs = raw
-          .slice(1, -1)
-          .split(',')
-          .map((s) => s.trim().replace(/^["']|["']$/g, ''))
-          .filter(Boolean)
-      }
-    }
-    if (appendPrUrl && !prs.includes(appendPrUrl)) prs.push(appendPrUrl)
-    if (removePrUrl) prs = prs.filter((p) => p !== removePrUrl)
-    const formatted = `[${prs.map((p) => JSON.stringify(p)).join(', ')}]`
-    if (prsMatch) fm = fm.replace(/^prs:\s*.*$/m, `prs: ${formatted}`)
-    else fm = fm.replace(/\n---$/, `\nprs: ${formatted}\n---`)
-  }
-  writeFileSync(path, fm + m[2])
   return { ok: true, path }
 }
 
