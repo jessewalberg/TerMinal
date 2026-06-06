@@ -1,6 +1,10 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { createTicketFile, updateTicketFile } from '../../bin/lib/backlog-core.mjs'
+import {
+  createTicketFile,
+  hasProjectionMarker,
+  updateTicketFile,
+} from '../../bin/lib/backlog-core.mjs'
 import { parseFrontmatter } from './frontmatter'
 
 // Per-repo backlog: <repoRoot>/backlog/NNNN-slug.md with YAML frontmatter.
@@ -107,8 +111,13 @@ export function updateTicket(
   slug: string,
   patch: { status?: string; priority?: string; appendPrUrl?: string; removePrUrl?: string },
 ): boolean {
+  const dir = backlogDir(repoRoot)
+  // Cut-over repos (ADR-0002): backlog/ is a read-only projection — refuse
+  // rather than patch a file the next regen overwrites. Vault-mode wiring
+  // for the app IPC lands with the cutover ticket (TerMinal-004).
+  if (hasProjectionMarker(dir)) return false
   const safe = slug.replace(/[^\w-]/g, '')
-  const p = join(backlogDir(repoRoot), `${safe}.md`)
+  const p = join(dir, `${safe}.md`)
   if (!existsSync(p)) return false
   return updateTicketFile(p, patch)
 }
@@ -116,6 +125,11 @@ export function updateTicket(
 export function createTicket(repoRoot: string, input: NewTicket): Ticket {
   const dir = backlogDir(repoRoot)
   if (!existsSync(dir)) throw new Error('no backlog/ in this repo')
+  if (hasProjectionMarker(dir)) {
+    throw new Error(
+      'backlog/ is a read-only projection — file tickets to the vault (ADR-0002)',
+    )
+  }
   const { slug } = createTicketFile(dir, input)
   const written = getTicket(repoRoot, slug)
   if (!written) throw new Error(`ticket ${slug} written but unreadable`)

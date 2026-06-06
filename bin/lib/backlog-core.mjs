@@ -4,7 +4,7 @@
 // no deps so the launchd installer can copy bin/lib/ alongside the deployed
 // scripts (~/.config/TerMinal/bin/lib/) — they import it relative to
 // themselves and work both in-repo and installed.
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const slugify = (s) =>
@@ -93,6 +93,115 @@ export function createTicketFile(backlogDir, input) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Vault-mode (Cross-Project ADR-0002): the vault is the only writable store
+// for cut-over repos; their backlog/ is a read-only projection branded by a
+// .projection marker. Writers redirect on the marker; until a repo is cut
+// over, none of this path runs.
+// ---------------------------------------------------------------------------
+
+export function hasProjectionMarker(backlogDir) {
+  return existsSync(join(backlogDir, '.projection'))
+}
+
+const KIND_NORMALIZE = { perf: 'performance' }
+
+function vaultTasksDir(vaultPath, slug) {
+  return join(vaultPath, 'Projects', slug, 'Tasks')
+}
+
+// Writes one vault task with the full ADR-0002 frontmatter. Vault NNN comes
+// from the exactly-3-digit file max (timestamp ids can't poison it);
+// source_id — the projection round-trip key — continues from the project
+// max. Atomic 'wx' create; a lost race increments the local candidate.
+export function createVaultTicketFile(route, input) {
+  const { vaultPath, slug } = route
+  const tasksDir = vaultTasksDir(vaultPath, slug)
+  mkdirSync(tasksDir, { recursive: true })
+  const today = todayStr()
+  const title = input.title || 'Untitled'
+  const kindRaw = input.type || 'feature'
+  const kind = KIND_NORMALIZE[kindRaw] ?? kindRaw
+
+  let maxSource = 0
+  let maxNNN = 0
+  for (const f of readdirSync(tasksDir)) {
+    if (!f.endsWith('.md')) continue
+    const m = f.match(/-(\d{3})\.md$/)
+    if (m) maxNNN = Math.max(maxNNN, parseInt(m[1], 10))
+    try {
+      const sm = readFileSync(join(tasksDir, f), 'utf8').match(/^source_id:\s*(\d+)\s*$/m)
+      if (sm) maxSource = Math.max(maxSource, parseInt(sm[1], 10))
+    } catch {
+      /* unreadable file — skip */
+    }
+  }
+  const sourceId = maxSource + 1
+
+  const list = (v) => `[${(v ?? []).map((x) => JSON.stringify(String(x))).join(', ')}]`
+  let nnn = maxNNN + 1
+  for (;;) {
+    const id = `${slug}-${String(nnn).padStart(3, '0')}`
+    const path = join(tasksDir, `${id}.md`)
+    const md = [
+      '---',
+      'type: "task"',
+      `id: "${id}"`,
+      `project: "${slug}"`,
+      `status: "${input.status || 'open'}"`,
+      `horizon: "${input.horizon || 'now'}"`,
+      'hitl: false',
+      `source_id: ${sourceId}`,
+      `priority: ${input.priority || 'medium'}`,
+      `kind: ${kind}`,
+      ...(input.size ? [`size: ${input.size}`] : []),
+      `source: ${input.source || 'TerMinal'}`,
+      `created: ${today}`,
+      `updated: ${today}`,
+      `prs: ${list(input.prs)}`,
+      `refs: ${list(input.refs)}`,
+      `depends_on: ${list(input.depends_on)}`,
+      '---',
+      '',
+      `# ${title}`,
+      '',
+      '## Goal',
+      '',
+      `${title}.`,
+      '',
+      '## Context',
+      '',
+      (input.body || '').trim(),
+      '',
+      '## Notes',
+      '',
+      `- ${today}: filed via vault-mode writer (${input.source || 'TerMinal'}).`,
+      '',
+    ].join('\n')
+    if (writeExclusive(path, md)) {
+      return { id, sourceId, path }
+    }
+    nnn += 1
+  }
+}
+
+// Projected slugs/filenames carry the original integer id — map it back to
+// the vault task that owns it.
+export function findVaultTaskBySourceId(vaultPath, slug, sourceId) {
+  const tasksDir = vaultTasksDir(vaultPath, slug)
+  if (!existsSync(tasksDir)) return null
+  const re = new RegExp(`^source_id:\\s*${Number(sourceId)}\\s*$`, 'm')
+  for (const f of readdirSync(tasksDir)) {
+    if (!f.endsWith('.md')) continue
+    try {
+      if (re.test(readFileSync(join(tasksDir, f), 'utf8'))) return join(tasksDir, f)
+    } catch {
+      /* skip unreadable */
+    }
+  }
+  return null
+}
+
 // In-place frontmatter patch (status / priority / prs list ops); always
 // bumps updated:. Scoped to the frontmatter block so body text can't match.
 export function updateTicketFile(path, patch) {
@@ -105,10 +214,18 @@ export function updateTicketFile(path, patch) {
   const m = raw.match(/^(---\n[\s\S]*?\n---)([\s\S]*)$/)
   if (!m) return false
   let fm = m[1]
+  // Quote-preserving: vault tasks serialize status as `status: "open"`,
+  // backlog tickets as `status: open` — patching must not change the style
+  // (vault conventions grep the quoted form).
   const setField = (key, val) => {
-    const re = new RegExp(`^(${key}:[ \\t]*).*$`, 'm')
-    if (re.test(fm)) fm = fm.replace(re, `$1${val}`)
-    else fm = fm.replace(/\n---$/, `\n${key}: ${val}\n---`)
+    const re = new RegExp(`^(${key}:[ \\t]*)(.*)$`, 'm')
+    const existing = fm.match(re)
+    if (existing) {
+      const quoted = existing[2].trim().startsWith('"')
+      fm = fm.replace(re, `$1${quoted ? `"${val}"` : val}`)
+    } else {
+      fm = fm.replace(/\n---$/, `\n${key}: ${val}\n---`)
+    }
   }
   if (patch.status) setField('status', patch.status)
   if (patch.priority) setField('priority', patch.priority)
