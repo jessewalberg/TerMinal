@@ -6,9 +6,10 @@ import {
   unlinkSync,
   copyFileSync,
   chmodSync,
+  cpSync,
 } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { specToTrigger, type CalendarDict } from './cron'
 import { readSchedules, type Schedule } from './schedules'
@@ -52,6 +53,19 @@ export function installRunner(srcPath: string): void {
   }
 }
 
+// terminal-cli and terminal-mcp-server import ./lib/backlog-core.mjs (the
+// consolidated ticket writer) relative to themselves — ship bin/lib/ next to
+// the installed copies so the import resolves at the deployed path too.
+function installBinLib(srcPath: string): void {
+  try {
+    const srcLib = join(dirname(srcPath), 'lib')
+    if (!existsSync(srcLib)) return
+    cpSync(srcLib, join(CFG, 'bin', 'lib'), { recursive: true })
+  } catch {
+    /* best effort */
+  }
+}
+
 // Same pattern for the script helper. Scripts referenced by .agents/<id>.sh
 // get ~/.config/TerMinal/bin prepended to PATH at exec time, so they can call
 // `terminal-cli hitl ...` etc. without knowing the absolute path.
@@ -62,6 +76,7 @@ export function installCli(srcPath: string): void {
     const dest = join(CFG, 'bin', 'terminal-cli')
     copyFileSync(srcPath, dest)
     chmodSync(dest, 0o755)
+    installBinLib(srcPath)
   } catch {
     /* best effort */
   }
@@ -76,6 +91,7 @@ export function installMcpServer(srcPath: string): void {
     const dest = join(CFG, 'bin', 'terminal-mcp-server')
     copyFileSync(srcPath, dest)
     chmodSync(dest, 0o755)
+    installBinLib(srcPath)
   } catch {
     /* best effort */
   }
