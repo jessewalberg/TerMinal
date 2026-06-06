@@ -95,6 +95,46 @@ describe('createTicket (consolidated writer)', () => {
     expect(readFileSync(join(root, 'backlog', '.next-id'), 'utf8').trim()).toBe('91')
   })
 
+  test('garbage .next-id hints are ignored (strict whole-string parse)', () => {
+    write('0002-existing.md', ticketMd(2, 'Existing'))
+    write('.next-id', '10000junk\n') // permissive parseInt would read 10000
+    const t = createTicket(root, {
+      title: 'After garbage',
+      type: 'feature',
+      priority: 'medium',
+      status: 'open',
+      body: '',
+    })
+    expect(t.id).toBe(3)
+  })
+
+  test('allocator terminates when the candidate collides with a file the max scan ignores', () => {
+    write('.next-id', '10000\n')
+    // 5-digit filename: invisible to the 4-digit max scan, but occupies the
+    // exact path the allocator computes — the old loop recomputed the same
+    // candidate forever (review finding, high)
+    write('10000-same-title.md', ticketMd(10000, 'Same title'))
+    const t = createTicket(root, {
+      title: 'Same title',
+      type: 'feature',
+      priority: 'medium',
+      status: 'open',
+      body: '',
+    })
+    expect(t.id).toBe(10001)
+  })
+
+  test('titles with quotes round-trip create → read unescaped', () => {
+    const t = createTicket(root, {
+      title: 'Fix "quoted" title',
+      type: 'bug',
+      priority: 'high',
+      status: 'open',
+      body: '',
+    })
+    expect(t.title).toBe('Fix "quoted" title')
+  })
+
   test('honors an explicit source', () => {
     const t = createTicket(root, {
       title: 'From a script',
@@ -121,6 +161,35 @@ describe('writeExclusive (atomic create primitive)', () => {
     expect(writeExclusive(p, 'first\n')).toBe(true)
     expect(writeExclusive(p, 'second\n')).toBe(false)
     expect(readFileSync(p, 'utf8')).toBe('first\n')
+  })
+})
+
+describe('terminal-cli ticket (process-level contract)', () => {
+  test('files a full-superset ticket, prints the path, exit 2 without TERMINAL_REPO', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gt-cli-'))
+    const fakeHome = mkdtempSync(join(tmpdir(), 'gt-home-')) // keep activity events out of the real feed
+    mkdirSync(join(root, 'backlog'))
+    const cli = join(import.meta.dir, '../../bin/terminal-cli')
+
+    const ok = Bun.spawnSync(['bun', cli, 'ticket', 'Proc-level smoke', 'the body'], {
+      env: { ...process.env, TERMINAL_REPO: root, HOME: fakeHome },
+    })
+    expect(ok.exitCode).toBe(0)
+    const path = ok.stdout.toString().trim()
+    expect(path).toContain('0001-proc-level-smoke')
+    const md = readFileSync(path, 'utf8')
+    expect(md).toContain('id: 1')
+    expect(md).toContain('hitl: false')
+    expect(md).toContain('depends_on: []')
+    expect(md).toContain('source: script')
+
+    const bad = Bun.spawnSync(['bun', cli, 'ticket', 'x', 'y'], {
+      env: { ...process.env, TERMINAL_REPO: '', HOME: fakeHome },
+    })
+    expect(bad.exitCode).toBe(2)
+
+    rmSync(root, { recursive: true, force: true })
+    rmSync(fakeHome, { recursive: true, force: true })
   })
 })
 

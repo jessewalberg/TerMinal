@@ -36,8 +36,11 @@ function maxExistingId(backlogDir) {
 
 function nextIdHint(backlogDir) {
   try {
-    const n = parseInt(readFileSync(join(backlogDir, '.next-id'), 'utf8').trim(), 10)
-    return Number.isFinite(n) && n > 0 ? n : 0
+    const raw = readFileSync(join(backlogDir, '.next-id'), 'utf8').trim()
+    // strict whole-string parse: a corrupted hint ("10000junk") is ignored,
+    // not truncated by parseInt into a huge bogus id (review finding)
+    if (!/^\d{1,9}$/.test(raw)) return 0
+    return parseInt(raw, 10)
   } catch {
     return 0
   }
@@ -47,14 +50,15 @@ function nextIdHint(backlogDir) {
 // Heals a stale-low .next-id (the app/cli writers historically never bumped
 // it — observed drifted in 3 of 5 repos) and respects a .next-id that is
 // deliberately ahead (reserved ids, template semantics). The create is
-// atomic; losing a cross-process race reallocates — the winner's file
-// raises the max, so the loop converges.
+// atomic; a collision increments the LOCAL candidate — guaranteed to
+// terminate even when the colliding file is invisible to the 4-digit max
+// scan (e.g. a 5-digit id), which a recompute loop would spin on forever.
 export function createTicketFile(backlogDir, input) {
   if (!existsSync(backlogDir)) throw new Error(`${backlogDir} does not exist`)
   const title = input.title || 'Untitled'
   const today = todayStr()
+  let id = Math.max(maxExistingId(backlogDir) + 1, nextIdHint(backlogDir))
   for (;;) {
-    const id = Math.max(maxExistingId(backlogDir) + 1, nextIdHint(backlogDir))
     const slug = `${String(id).padStart(4, '0')}-${slugify(title)}`
     const path = join(backlogDir, `${slug}.md`)
     const md = [
@@ -85,6 +89,7 @@ export function createTicketFile(backlogDir, input) {
       }
       return { id, slug, path }
     }
+    id += 1
   }
 }
 
