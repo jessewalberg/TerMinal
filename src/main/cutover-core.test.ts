@@ -3,9 +3,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
+  applyCutover,
   quiesceStatus,
   setRepoSchedulesDisabled,
   restoreWritable,
+  withIgnoredBacklog,
 } from '../../bin/lib/cutover-core.mjs'
 import { hasProjectionMarker } from '../../bin/lib/backlog-core.mjs'
 
@@ -165,6 +167,70 @@ describe('setRepoSchedulesDisabled', () => {
     })
     expect(result.changed).toEqual([])
     expect(existsSync(disabledFile)).toBe(false)
+  })
+})
+
+describe('applyCutover orchestration (review a3664e2f)', () => {
+  const harness = (over: Record<string, unknown> = {}) => {
+    const calls: string[] = []
+    const hooks = {
+      disable: () => {
+        calls.push('disable')
+        return { changed: ['sched-a'] }
+      },
+      enable: (only: string[]) => {
+        calls.push(`enable:${only.join(',')}`)
+        return { changed: only }
+      },
+      quiesce: () => {
+        calls.push('quiesce')
+        return { quiet: true, blockers: [], stale: [] }
+      },
+      importStep: () => calls.push('import'),
+      untrackStep: () => calls.push('untrack'),
+      projectStep: () => calls.push('project'),
+      ...over,
+    }
+    return { calls, hooks }
+  }
+
+  test('the kill-switch lands BEFORE quiesce — a schedule cannot start in between', () => {
+    const { calls, hooks } = harness()
+    applyCutover(hooks)
+    expect(calls).toEqual(['disable', 'quiesce', 'import', 'untrack', 'project', 'enable:sched-a'])
+  })
+
+  test('a quiesce refusal still re-enables exactly what was disabled', () => {
+    const { calls, hooks } = harness({
+      quiesce: () => {
+        calls.push('quiesce')
+        return { quiet: false, blockers: [{ id: 'live', pid: 1, ageMs: 0, file: 'x' }], stale: [] }
+      },
+    })
+    expect(() => applyCutover(hooks)).toThrow(/live run/)
+    expect(calls).toEqual(['disable', 'quiesce', 'enable:sched-a'])
+  })
+
+  test('a step failure mid-flow still re-enables exactly what was disabled', () => {
+    const { calls, hooks } = harness({
+      projectStep: () => {
+        calls.push('project')
+        throw new Error('projection exploded')
+      },
+    })
+    expect(() => applyCutover(hooks)).toThrow(/projection exploded/)
+    expect(calls).toEqual(['disable', 'quiesce', 'import', 'untrack', 'project', 'enable:sched-a'])
+  })
+})
+
+describe('withIgnoredBacklog (review 5e0379f6)', () => {
+  test('appends backlog/ once and is idempotent on retries', () => {
+    expect(withIgnoredBacklog('')).toBe('backlog/\n')
+    expect(withIgnoredBacklog('node_modules/\n')).toBe('node_modules/\nbacklog/\n')
+    const once = withIgnoredBacklog('node_modules/\n')
+    expect(withIgnoredBacklog(once)).toBe(once)
+    // matches the bare line only, not substrings
+    expect(withIgnoredBacklog('legacy-backlog/\n')).toBe('legacy-backlog/\nbacklog/\n')
   })
 })
 

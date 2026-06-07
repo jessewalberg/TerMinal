@@ -7,8 +7,9 @@
 //   quiesceStatus            — is the repo safe to cut over right now?
 //   setRepoSchedulesDisabled — kill-switch toggle scoped to one repo
 //   restoreWritable          — rollback: flip a projected backlog writable
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { updateDisabledIds } from './disabled-store.mjs'
 
 const STALE_AFTER_MS = 2 * 3600_000
 
@@ -61,19 +62,12 @@ export function quiesceStatus({ repoRoot, runsDirs, isPidAlive = defaultIsPidAli
   return { quiet: blockers.length === 0, blockers, stale }
 }
 
-function readDisabledIds(disabledFile) {
-  try {
-    const parsed = JSON.parse(readFileSync(disabledFile, 'utf8'))
-    return new Set(Array.isArray(parsed) ? parsed : parsed?.scheduleIds || [])
-  } catch {
-    return new Set()
-  }
-}
-
 // Kill-switch toggle scoped to one repoRoot (cutover steps 2 and 7). Returns
 // the ids THIS call changed so re-enable can be exact: a schedule the
 // circuit breaker disabled before cutover must stay off afterward — pass
-// `only` (the disable call's `changed`) when re-enabling.
+// `only` (the disable call's `changed`) when re-enabling. The mutation runs
+// through disabled-store (lock + re-read + atomic rename), so a concurrent
+// circuit-breaker write composes instead of being clobbered (review 36716dba).
 export function setRepoSchedulesDisabled({ repoRoot, schedulesFile, disabledFile, disable, only }) {
   let schedules = []
   try {
@@ -84,22 +78,51 @@ export function setRepoSchedulesDisabled({ repoRoot, schedulesFile, disabledFile
   }
   const repoIds = schedules.filter((sched) => sched?.repoRoot === repoRoot).map((sched) => sched.id)
   const scope = only ? repoIds.filter((id) => only.includes(id)) : repoIds
-  const disabled = readDisabledIds(disabledFile)
+  if (!scope.length) return { changed: [] }
   const changed = []
-  for (const id of scope) {
-    if (disable && !disabled.has(id)) {
-      disabled.add(id)
-      changed.push(id)
-    } else if (!disable && disabled.has(id)) {
-      disabled.delete(id)
-      changed.push(id)
+  updateDisabledIds(disabledFile, (set) => {
+    for (const id of scope) {
+      if (disable && !set.has(id)) {
+        set.add(id)
+        changed.push(id)
+      } else if (!disable && set.has(id)) {
+        set.delete(id)
+        changed.push(id)
+      }
     }
-  }
-  if (changed.length) {
-    mkdirSync(dirname(disabledFile), { recursive: true })
-    writeFileSync(disabledFile, JSON.stringify({ scheduleIds: [...disabled] }, null, 2))
-  }
+  })
   return { changed }
+}
+
+// Apply-mode sequencing (review a3664e2f): the kill-switch MUST land before
+// the quiesce check — quiesce-then-disable leaves a window where a schedule
+// fires into the repo mid-cutover. Every exit path re-enables exactly what
+// this run disabled (a quiesce refusal included); circuit-broken schedules
+// stay off because `enable` is scoped to `down.changed`.
+export function applyCutover({ disable, enable, quiesce, importStep, untrackStep, projectStep }) {
+  const down = disable()
+  try {
+    const status = quiesce()
+    if (!status.quiet) {
+      const blockers = status.blockers
+        .map((b) => `${b.id} (pid ${b.pid}, ${Math.round(b.ageMs / 60000)} min old)`)
+        .join(', ')
+      throw new Error(`blocked by live run(s): ${blockers}`)
+    }
+    importStep()
+    untrackStep()
+    projectStep()
+    return { disabled: down.changed, quiesce: status }
+  } finally {
+    enable(down.changed)
+  }
+}
+
+// Idempotent gitignore line (review 5e0379f6): retries of a half-applied
+// cutover must not stack duplicate entries.
+export function withIgnoredBacklog(content) {
+  if (content.split('\n').some((line) => line.trim() === 'backlog/')) return content
+  return `${content.length && !content.endsWith('\n') ? `${content}\n` : content}backlog/\n`
 }
 
 // Rollback (ADR-0002): delete .projection, restore .next-id — the repo

@@ -32,3 +32,14 @@ export declare function restoreWritable(options: {
   backlogDir: string
   nextId: number
 }): { restored: boolean }
+
+export declare function applyCutover(hooks: {
+  disable: () => { changed: Array<string> }
+  enable: (only: Array<string>) => { changed: Array<string> }
+  quiesce: () => QuiesceResult
+  importStep: () => void
+  untrackStep: () => void
+  projectStep: () => void
+}): { disabled: Array<string>; quiesce: QuiesceResult }
+
+export declare function withIgnoredBacklog(content: string): string
