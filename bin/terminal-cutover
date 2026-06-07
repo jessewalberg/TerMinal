@@ -1,0 +1,202 @@
+#!/usr/bin/env bun
+// terminal-cutover — scripted per-repo vault cutover (vault TerMinal-004,
+// Cross-Project ADR-0002 build 6). Dry-run by default; --apply executes.
+//
+//   terminal-cutover <repoRoot> [--apply]     run the 7-step cutover
+//   terminal-cutover <repoRoot> --rollback    revert to writable-canonical
+//
+// Steps (ADR-0002): (1) preflight: vault-mode repo + vault tooling present;
+// (2) disable the repo's schedules (kill-switch) — BEFORE quiesce, so a
+// schedule cannot fire into the window; (3) quiesce — no running record
+// with a live pid; (4) import the slug's backlog history into the vault;
+// (5) untrack backlog/ + gitignore (idempotent: retries skip what's done);
+// (6) project the slug (--init); (7) re-enable exactly what step 2 disabled
+// — on EVERY exit path, including a quiesce refusal. The vault Runbook page
+// (programming-vault Projects/TerMinal/Runbooks/Vault-Cutover.md) is the
+// operator-facing companion, including bad-import rollback.
+import { execFileSync } from 'node:child_process'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { resolveRoute } from './lib/vault-route.mjs'
+import {
+  applyCutover,
+  quiesceStatus,
+  restoreWritable,
+  setRepoSchedulesDisabled,
+  withIgnoredBacklog,
+} from './lib/cutover-core.mjs'
+
+// TERMINAL_CONFIG_DIR override exists for the integration tests — production
+// always uses the real config dir.
+const CFG = process.env.TERMINAL_CONFIG_DIR?.trim() || join(homedir(), '.config', 'TerMinal')
+const RUNS_DIRS = [join(CFG, 'cron-runs'), join(CFG, 'agent-runs')]
+const SCHEDULES_FILE = join(CFG, 'schedules.json')
+const DISABLED_FILE = join(CFG, 'agents', 'disabled.json')
+// vault.mjs lives in the sibling tooling repo (vault Schema: tooling
+// prerequisite); overridable for non-standard checkouts and tests.
+const VAULT_TOOLS =
+  process.env.VAULT_TOOLS_PATH?.trim() ||
+  '/Volumes/home-ext/projects/jessewalberg.com/scripts/vault.mjs'
+
+const args = process.argv.slice(2)
+const repoRoot = args[0] ? resolve(args[0]) : null
+const apply = args.includes('--apply')
+const rollback = args.includes('--rollback')
+
+if (!repoRoot || !existsSync(repoRoot)) {
+  console.error('usage: terminal-cutover <repoRoot> [--apply|--rollback]')
+  process.exit(2)
+}
+
+let settings = {}
+try {
+  settings = JSON.parse(readFileSync(join(CFG, 'settings.json'), 'utf8'))
+} catch {
+  /* defaults */
+}
+const route = resolveRoute(repoRoot, settings, process.env)
+const backlogDir = join(repoRoot, 'backlog')
+
+const sh = (cmd, cmdArgs, opts = {}) =>
+  execFileSync(cmd, cmdArgs, { stdio: ['ignore', 'inherit', 'inherit'], cwd: repoRoot, ...opts })
+// Every vault.mjs invocation runs against the ROUTE-RESOLVED vault, not
+// vault.mjs's own default (review 37fb3c64: a non-default GT_VAULT_PATH /
+// settings.vaultPath must reach the importer and the projection).
+const vaultTool = (toolArgs) =>
+  sh('node', [VAULT_TOOLS, ...toolArgs], {
+    env: { ...process.env, PROJECTS_VAULT_PATH: route.vaultPath },
+  })
+
+if (rollback) {
+  // ADR-0002 rollback: marker off, .next-id valid, backlog/ tracked again.
+  // Deleting imported vault tasks after a BAD IMPORT is deliberate and
+  // manual — see the Runbook (identified by source_id + the import Log entry).
+  let nextId = 1
+  try {
+    nextId = Math.max(
+      1,
+      ...readdirSync(backlogDir)
+        .map((f) => f.match(/^(\d{4})-.*\.md$/)?.[1])
+        .filter(Boolean)
+        .map(Number)
+        .map((n) => n + 1),
+      Number(readFileSync(join(backlogDir, '.next-id'), 'utf8').trim()) || 1,
+    )
+  } catch {
+    /* keep 1 */
+  }
+  const { restored } = restoreWritable({ backlogDir, nextId })
+  try {
+    const gitignore = join(repoRoot, '.gitignore')
+    const lines = readFileSync(gitignore, 'utf8').split('\n')
+    writeFileSync(gitignore, lines.filter((l) => l.trim() !== 'backlog/').join('\n'))
+  } catch {
+    /* no .gitignore — nothing to un-ignore */
+  }
+  console.log(
+    restored
+      ? `rolled back: ${route.slug} backlog is writable-canonical again (.next-id ${nextId}); ` +
+          're-track with `git add backlog/` and see the Runbook if the IMPORT itself was bad'
+      : `nothing to roll back: no .projection marker in ${backlogDir}`,
+  )
+  process.exit(0)
+}
+
+// ---- step 1: preflight ------------------------------------------------------
+if (route.mode !== 'vault') {
+  console.error(`refusing: ${route.slug} is mode '${route.mode}' (carve-out) — cutover is for vault-mode repos only`)
+  process.exit(1)
+}
+if (!existsSync(VAULT_TOOLS)) {
+  console.error(`vault tooling not found at ${VAULT_TOOLS} (set VAULT_TOOLS_PATH)`)
+  process.exit(1)
+}
+console.log(`cutover ${route.slug} (${repoRoot}) → vault ${route.vaultPath} ${apply ? '[APPLY]' : '[dry-run]'}`)
+
+if (!apply) {
+  // dry-run: read-only — quiesce report, schedule scope, the import plan
+  const quiesce = quiesceStatus({ repoRoot, runsDirs: RUNS_DIRS })
+  for (const s of quiesce.stale) console.log(`stale run record ignored: ${s.id} (${s.reason})`)
+  if (!quiesce.quiet) {
+    for (const b of quiesce.blockers) {
+      console.error(`BLOCKED by live run ${b.id} (pid ${b.pid}, ${Math.round(b.ageMs / 60000)} min old)`)
+    }
+    process.exit(1)
+  }
+  console.log('quiesce: quiet')
+  let schedules = []
+  try {
+    schedules = JSON.parse(readFileSync(SCHEDULES_FILE, 'utf8'))
+  } catch {
+    /* none */
+  }
+  const ids = (Array.isArray(schedules) ? schedules : []).filter((s) => s?.repoRoot === repoRoot).map((s) => s.id)
+  console.log(`would disable ${ids.length} schedule(s): ${ids.join(', ') || '(none)'}`)
+  vaultTool(['import-backlog', route.slug, '--repo-dir', repoRoot])
+  console.log('would: git rm -r --cached backlog/ && gitignore backlog/')
+  console.log(`would: vault.mjs project ${route.slug} --init`)
+  process.exit(0)
+}
+
+// ---- steps 2–7 via the tested orchestrator (kill-switch BEFORE quiesce) -----
+try {
+  const result = applyCutover({
+    disable: () => {
+      const down = setRepoSchedulesDisabled({
+        repoRoot,
+        schedulesFile: SCHEDULES_FILE,
+        disabledFile: DISABLED_FILE,
+        disable: true,
+      })
+      console.log(`schedules disabled: ${down.changed.join(', ') || '(none)'}`)
+      return down
+    },
+    enable: (only) => {
+      const up = setRepoSchedulesDisabled({
+        repoRoot,
+        schedulesFile: SCHEDULES_FILE,
+        disabledFile: DISABLED_FILE,
+        disable: false,
+        only,
+      })
+      console.log(`schedules re-enabled: ${up.changed.join(', ') || '(none)'}`)
+      return up
+    },
+    quiesce: () => {
+      const status = quiesceStatus({ repoRoot, runsDirs: RUNS_DIRS })
+      for (const s of status.stale) console.log(`stale run record ignored: ${s.id} (${s.reason})`)
+      if (status.quiet) console.log('quiesce: quiet')
+      return status
+    },
+    importStep: () => vaultTool(['import-backlog', route.slug, '--repo-dir', repoRoot, '--apply']),
+    untrackStep: () => {
+      // idempotent (review 5e0379f6): a retry after a later-step failure
+      // must sail through to projection, not die on `git rm --cached`
+      const tracked = execFileSync('git', ['ls-files', '--', 'backlog'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      }).trim()
+      if (tracked) {
+        sh('git', ['rm', '-r', '-q', '--cached', 'backlog/'])
+      }
+      const gitignore = join(repoRoot, '.gitignore')
+      let current = ''
+      try {
+        current = readFileSync(gitignore, 'utf8')
+      } catch {
+        /* new file */
+      }
+      writeFileSync(gitignore, withIgnoredBacklog(current))
+      console.log('backlog/ untracked + gitignored (history stays in git)')
+    },
+    projectStep: () => vaultTool(['project', route.slug, '--init']),
+  })
+  console.log(
+    `cutover complete: ${route.slug} is vault-canonical (schedules touched: ${result.disabled.join(', ') || 'none'}). ` +
+      'Commit the untrack + .gitignore change, then verify widgets.',
+  )
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error))
+  process.exit(1)
+}
