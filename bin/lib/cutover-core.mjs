@@ -9,7 +9,7 @@
 //   restoreWritable          — rollback: flip a projected backlog writable
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { updateDisabledIds } from './disabled-store.mjs'
+import { updateDisabledReasons } from './disabled-store.mjs'
 
 const STALE_AFTER_MS = 2 * 3600_000
 
@@ -80,13 +80,20 @@ export function setRepoSchedulesDisabled({ repoRoot, schedulesFile, disabledFile
   const scope = only ? repoIds.filter((id) => only.includes(id)) : repoIds
   if (!scope.length) return { changed: [] }
   const changed = []
-  updateDisabledIds(disabledFile, (set) => {
+  // Cutover owns only its own 'cutover' reason (review 43ea5660): disable
+  // tokens ids that are not already disabled for some other reason, and
+  // re-enable strips ONLY the cutover token — a breaker trip or manual pause
+  // that landed in the meantime keeps the schedule disabled.
+  updateDisabledReasons(disabledFile, (map) => {
     for (const id of scope) {
-      if (disable && !set.has(id)) {
-        set.add(id)
-        changed.push(id)
-      } else if (!disable && set.has(id)) {
-        set.delete(id)
+      const reasons = map.get(id)
+      if (disable) {
+        if (!reasons || reasons.size === 0) {
+          map.set(id, new Set(['cutover']))
+          changed.push(id)
+        }
+      } else if (reasons?.has('cutover')) {
+        reasons.delete('cutover')
         changed.push(id)
       }
     }

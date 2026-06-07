@@ -40,7 +40,7 @@ import {
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { readDisabledIds, updateDisabledIds } from './lib/disabled-store.mjs'
+import { readDisabledIds, readDisabledReasons, updateDisabledReasons } from './lib/disabled-store.mjs'
 
 const CFG = join(homedir(), '.config', 'TerMinal')
 const SCHED_FILE = join(CFG, 'schedules.json')
@@ -367,12 +367,18 @@ function maybeCircuitBreak(scheduleId, sched) {
   const recent = recentRuns(scheduleId, CIRCUIT_BREAK_AFTER)
   if (recent.length < CIRCUIT_BREAK_AFTER) return false
   if (!recent.every((r) => r.status === 'failed')) return false
-  if (readDisabled().has(scheduleId)) return false // already disabled
+  // A cutover token is TEMPORARY (review 43ea5660): the breaker must still
+  // record its durable trip through it, or cutover's re-enable erases the
+  // trip. Only a durable reason (manual pause / earlier trip) skips.
+  const existing = readDisabledReasons(DISABLED_FILE).get(scheduleId)
+  if (existing && [...existing].some((r) => r !== 'cutover')) return false
   let tripped = false
   try {
-    updateDisabledIds(DISABLED_FILE, (set) => {
-      if (!set.has(scheduleId)) {
-        set.add(scheduleId)
+    updateDisabledReasons(DISABLED_FILE, (map) => {
+      const set = map.get(scheduleId) ?? new Set()
+      if ([...set].every((r) => r === 'cutover')) {
+        set.add('breaker')
+        map.set(scheduleId, set)
         tripped = true
       }
     })
@@ -380,7 +386,7 @@ function maybeCircuitBreak(scheduleId, sched) {
     log(`failed writing disabled: ${e}`)
     return false
   }
-  if (!tripped) return false // another writer disabled it in the meantime
+  if (!tripped) return false // another writer durably disabled it meanwhile
   fileHitl({
     title: `Circuit broken · ${sched.agentTitle}`,
     action: `auto-disabled after ${CIRCUIT_BREAK_AFTER} consecutive failures — re-enable from the Schedules tab when fixed`,

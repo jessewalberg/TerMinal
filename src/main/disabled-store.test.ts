@@ -2,7 +2,12 @@ import { test, expect, describe, beforeEach, afterEach } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { readDisabledIds, updateDisabledIds } from '../../bin/lib/disabled-store.mjs'
+import {
+  readDisabledIds,
+  readDisabledReasons,
+  updateDisabledIds,
+  updateDisabledReasons,
+} from '../../bin/lib/disabled-store.mjs'
 
 // Shared kill-switch store (review 36716dba): cutover and terminal-cron's
 // circuit breaker both write agents/disabled.json — updates must re-read
@@ -42,6 +47,54 @@ describe('disabled-store', () => {
     updateDisabledIds(file, (set) => set.add('sched-b')) // the breaker path uses the same store
     updateDisabledIds(file, (set) => set.delete('sched-a'))
     expect(JSON.parse(readFileSync(file, 'utf8')).scheduleIds).toEqual(['sched-b'])
+  })
+
+  // Reason/ownership semantics (review 43ea5660): a flat id set cannot tell
+  // cutover's TEMPORARY pause apart from the circuit breaker's DURABLE trip
+  // or the user's manual pause — so cutover re-enable could erase a breaker
+  // trip that landed mid-cutover.
+  test('reasons compose: cutover + breaker on one id, removing cutover keeps it disabled', () => {
+    updateDisabledReasons(file, (map) => {
+      map.set('sched-a', new Set(['cutover']))
+    })
+    updateDisabledReasons(file, (map) => {
+      const set = map.get('sched-a') ?? new Set()
+      set.add('breaker')
+      map.set('sched-a', set)
+    })
+    updateDisabledReasons(file, (map) => {
+      const set = map.get('sched-a')
+      set?.delete('cutover')
+      if (set && set.size === 0) map.delete('sched-a')
+    })
+    expect([...readDisabledIds(file)]).toEqual(['sched-a'])
+    expect([...(readDisabledReasons(file).get('sched-a') ?? [])]).toEqual(['breaker'])
+  })
+
+  test('legacy flat files read as manual reasons and the union view stays shape-compatible', () => {
+    const legacy = join(dir, 'legacy.json')
+    writeFileSync(legacy, JSON.stringify({ scheduleIds: ['old-a'] }))
+    expect([...(readDisabledReasons(legacy).get('old-a') ?? [])]).toEqual(['manual'])
+    updateDisabledReasons(legacy, (map) => {
+      map.set('new-b', new Set(['breaker']))
+    })
+    // every existing reader of {scheduleIds} still sees the union
+    const raw = JSON.parse(readFileSync(legacy, 'utf8'))
+    expect(raw.scheduleIds.sort()).toEqual(['new-b', 'old-a'])
+    expect([...(readDisabledReasons(legacy).get('old-a') ?? [])]).toEqual(['manual'])
+  })
+
+  test('updateDisabledIds wrapper keeps set semantics: adds become manual, deletes clear every reason', () => {
+    updateDisabledReasons(file, (map) => {
+      map.set('sched-a', new Set(['cutover', 'breaker']))
+    })
+    updateDisabledIds(file, (set) => {
+      set.add('manual-b')
+      set.delete('sched-a') // user-style removal overrides all reasons
+    })
+    expect([...readDisabledIds(file)].sort()).toEqual(['manual-b'])
+    expect([...(readDisabledReasons(file).get('manual-b') ?? [])]).toEqual(['manual'])
+    expect(readDisabledReasons(file).has('sched-a')).toBe(false)
   })
 
   test('a stale lock is taken over instead of deadlocking', () => {

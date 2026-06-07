@@ -9,6 +9,7 @@ import {
   restoreWritable,
   withIgnoredBacklog,
 } from '../../bin/lib/cutover-core.mjs'
+import { updateDisabledReasons } from '../../bin/lib/disabled-store.mjs'
 import { hasProjectionMarker } from '../../bin/lib/backlog-core.mjs'
 
 // Per-repo cutover support (vault TerMinal-004, ADR-0002 build 6): quiesce
@@ -155,6 +156,34 @@ describe('setRepoSchedulesDisabled', () => {
     expect(up.changed).toEqual(['sched-a'])
     const disabled = JSON.parse(readFileSync(disabledFile, 'utf8'))
     expect(disabled.scheduleIds).toEqual(['sched-b'])
+  })
+
+  test('a circuit-breaker trip landing MID-cutover survives the re-enable (review 43ea5660)', () => {
+    const down = setRepoSchedulesDisabled({
+      repoRoot: REPO,
+      schedulesFile,
+      disabledFile,
+      disable: true,
+    })
+    expect(down.changed.sort()).toEqual(['sched-a', 'sched-b'])
+    // the already-running sched-a fails enough to trip the breaker while
+    // cutover holds its temporary token — the durable reason must stick
+    updateDisabledReasons(disabledFile, (map: Map<string, Set<string>>) => {
+      const set = map.get('sched-a') ?? new Set()
+      set.add('breaker')
+      map.set('sched-a', set)
+    })
+    const up = setRepoSchedulesDisabled({
+      repoRoot: REPO,
+      schedulesFile,
+      disabledFile,
+      disable: false,
+      only: down.changed,
+    })
+    expect(up.changed.sort()).toEqual(['sched-a', 'sched-b'])
+    // sched-b fully re-enabled; sched-a stays disabled by the breaker
+    const disabled = JSON.parse(readFileSync(disabledFile, 'utf8'))
+    expect(disabled.scheduleIds).toEqual(['sched-a'])
   })
 
   test('missing schedules.json means nothing to toggle', () => {
