@@ -1,0 +1,160 @@
+#!/usr/bin/env bun
+// terminal-cutover — scripted per-repo vault cutover (vault TerMinal-004,
+// Cross-Project ADR-0002 build 6). Dry-run by default; --apply executes.
+//
+//   terminal-cutover <repoRoot> [--apply]     run the 7-step cutover
+//   terminal-cutover <repoRoot> --rollback    revert to writable-canonical
+//
+// Steps (ADR-0002): (1) preflight: vault-mode repo + vault tooling present;
+// (2) disable the repo's schedules (kill-switch); (3) quiesce — no running
+// record with a live pid; (4) import the slug's backlog history into the
+// vault; (5) untrack backlog/ + gitignore (history stays in git; the live
+// view becomes machine-local); (6) project the slug (--init); (7) re-enable
+// exactly the schedules step 2 disabled. Any failure after step 2 re-enables
+// them before exiting. The vault Runbook page
+// (programming-vault Projects/TerMinal/Runbooks/Vault-Cutover.md) is the
+// operator-facing companion, including bad-import rollback.
+import { execFileSync } from 'node:child_process'
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { resolveRoute } from './lib/vault-route.mjs'
+import { quiesceStatus, restoreWritable, setRepoSchedulesDisabled } from './lib/cutover-core.mjs'
+
+const CFG = join(homedir(), '.config', 'TerMinal')
+const RUNS_DIRS = [join(CFG, 'cron-runs'), join(CFG, 'agent-runs')]
+const SCHEDULES_FILE = join(CFG, 'schedules.json')
+const DISABLED_FILE = join(CFG, 'agents', 'disabled.json')
+// vault.mjs lives in the sibling tooling repo (vault Schema: tooling
+// prerequisite); overridable for non-standard checkouts.
+const VAULT_TOOLS =
+  process.env.VAULT_TOOLS_PATH?.trim() ||
+  '/Volumes/home-ext/projects/jessewalberg.com/scripts/vault.mjs'
+
+const args = process.argv.slice(2)
+const repoRoot = args[0] ? resolve(args[0]) : null
+const apply = args.includes('--apply')
+const rollback = args.includes('--rollback')
+
+if (!repoRoot || !existsSync(repoRoot)) {
+  console.error('usage: terminal-cutover <repoRoot> [--apply|--rollback]')
+  process.exit(2)
+}
+
+let settings = {}
+try {
+  settings = JSON.parse(readFileSync(join(CFG, 'settings.json'), 'utf8'))
+} catch {
+  /* defaults */
+}
+const route = resolveRoute(repoRoot, settings, process.env)
+const backlogDir = join(repoRoot, 'backlog')
+
+const sh = (cmd, cmdArgs, opts = {}) =>
+  execFileSync(cmd, cmdArgs, { stdio: ['ignore', 'inherit', 'inherit'], cwd: repoRoot, ...opts })
+
+if (rollback) {
+  // ADR-0002 rollback: marker off, .next-id valid, backlog/ tracked again.
+  // Deleting imported vault tasks after a BAD IMPORT is deliberate and
+  // manual — see the Runbook (identified by source_id + the import Log entry).
+  let nextId = 1
+  try {
+    nextId = Math.max(
+      1,
+      ...readdirSync(backlogDir)
+        .map((f) => f.match(/^(\d{4})-.*\.md$/)?.[1])
+        .filter(Boolean)
+        .map(Number)
+        .map((n) => n + 1),
+      Number(readFileSync(join(backlogDir, '.next-id'), 'utf8').trim()) || 1,
+    )
+  } catch {
+    /* keep 1 */
+  }
+  const { restored } = restoreWritable({ backlogDir, nextId })
+  try {
+    const gitignore = join(repoRoot, '.gitignore')
+    const lines = readFileSync(gitignore, 'utf8').split('\n')
+    writeFileSync(gitignore, lines.filter((l) => l.trim() !== 'backlog/').join('\n'))
+  } catch {
+    /* no .gitignore — nothing to un-ignore */
+  }
+  console.log(
+    restored
+      ? `rolled back: ${route.slug} backlog is writable-canonical again (.next-id ${nextId}); ` +
+          're-track with `git add backlog/` and see the Runbook if the IMPORT itself was bad'
+      : `nothing to roll back: no .projection marker in ${backlogDir}`,
+  )
+  process.exit(0)
+}
+
+// ---- step 1: preflight ------------------------------------------------------
+if (route.mode !== 'vault') {
+  console.error(`refusing: ${route.slug} is mode '${route.mode}' (carve-out) — cutover is for vault-mode repos only`)
+  process.exit(1)
+}
+if (!existsSync(VAULT_TOOLS)) {
+  console.error(`vault tooling not found at ${VAULT_TOOLS} (set VAULT_TOOLS_PATH)`)
+  process.exit(1)
+}
+console.log(`cutover ${route.slug} (${repoRoot}) → vault ${route.vaultPath} ${apply ? '[APPLY]' : '[dry-run]'}`)
+
+// ---- step 3 (checked before touching anything): quiesce ---------------------
+const quiesce = quiesceStatus({ repoRoot, runsDirs: RUNS_DIRS })
+for (const s of quiesce.stale) console.log(`stale run record ignored: ${s.id} (${s.reason})`)
+if (!quiesce.quiet) {
+  for (const b of quiesce.blockers) {
+    console.error(`BLOCKED by live run ${b.id} (pid ${b.pid}, ${Math.round(b.ageMs / 60000)} min old)`)
+  }
+  process.exit(1)
+}
+console.log('quiesce: quiet')
+
+if (!apply) {
+  // dry-run: report the schedule scope + the import plan, mutate nothing
+  let schedules = []
+  try {
+    schedules = JSON.parse(readFileSync(SCHEDULES_FILE, 'utf8'))
+  } catch {
+    /* none */
+  }
+  const ids = (Array.isArray(schedules) ? schedules : []).filter((s) => s?.repoRoot === repoRoot).map((s) => s.id)
+  console.log(`would disable ${ids.length} schedule(s): ${ids.join(', ') || '(none)'}`)
+  sh('node', [VAULT_TOOLS, 'import-backlog', route.slug, '--repo-dir', repoRoot])
+  console.log(`would: git rm -r --cached backlog/ && echo backlog/ >> .gitignore`)
+  console.log(`would: node ${VAULT_TOOLS} project ${route.slug} --init`)
+  process.exit(0)
+}
+
+// ---- step 2: kill-switch ----------------------------------------------------
+const down = setRepoSchedulesDisabled({
+  repoRoot,
+  schedulesFile: SCHEDULES_FILE,
+  disabledFile: DISABLED_FILE,
+  disable: true,
+})
+console.log(`schedules disabled: ${down.changed.join(', ') || '(none)'}`)
+
+try {
+  // ---- step 4: import -------------------------------------------------------
+  sh('node', [VAULT_TOOLS, 'import-backlog', route.slug, '--repo-dir', repoRoot, '--apply'])
+
+  // ---- step 5: untrack the view --------------------------------------------
+  sh('git', ['rm', '-r', '-q', '--cached', 'backlog/'])
+  appendFileSync(join(repoRoot, '.gitignore'), 'backlog/\n')
+  console.log('backlog/ untracked + gitignored (history stays in git)')
+
+  // ---- step 6: project ------------------------------------------------------
+  sh('node', [VAULT_TOOLS, 'project', route.slug, '--init'])
+} finally {
+  // ---- step 7: re-enable exactly what step 2 disabled -----------------------
+  const up = setRepoSchedulesDisabled({
+    repoRoot,
+    schedulesFile: SCHEDULES_FILE,
+    disabledFile: DISABLED_FILE,
+    disable: false,
+    only: down.changed,
+  })
+  console.log(`schedules re-enabled: ${up.changed.join(', ') || '(none)'}`)
+}
+console.log(`cutover complete: ${route.slug} is vault-canonical. Commit the untrack + .gitignore change, then verify widgets.`)
