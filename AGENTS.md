@@ -3,22 +3,16 @@
 Instructions for AI coding agents working in this repo (Claude Code loads
 this via CLAUDE.md's `@AGENTS.md`; Cursor and Codex read it natively).
 
-## Programming vault (operating state)
+## Operating model
 
-The programming vault is the canonical store for durable work state — not a
-separate handoff step. Path: `/Volumes/home-ext/projects/programming-vault`.
+This repo is canonical for its own **decisions** (`docs/decisions/`), **work
+queue** (`backlog/*.md`), and **learnings** (`docs/learnings/`) — committed with
+the code so agents read them in-context.
 
-- Before starting work: read the vault's `AGENTS.md`, `Cross-Project/Now.md`,
-  then `Projects/TerMinal/Overview.md`, `Tasks/`, `Sessions/`, and
-  `Services.md` when present.
-- `Projects/TerMinal/Tasks/` is the durable task source; repo backlog files are
-  legacy import sources, not the place for new durable work.
-- Keep the active record in `Projects/TerMinal/Sessions/`; update touched
-  tasks/sessions/wiki pages before finishing.
-- Decisions are vault-canonical ADRs (`Projects/TerMinal/Decisions/`); this
-  repo keeps only the `docs/decisions/README.md` pointer.
-- Never write secret values anywhere — secrets are managed in 1Password;
-  references only.
+- This repo is **public**: never commit secret values *or* secret key names.
+  Secrets are 1Password-only; key-name references live in a private store, not
+  in this repo.
+- Durable conclusions from a work item graduate to `docs/decisions/` on close.
 
 ## Project
 
