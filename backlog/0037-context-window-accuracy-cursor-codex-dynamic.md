@@ -1,14 +1,15 @@
 ---
 id: 37
 title: "Context-window accuracy: cover cursor + codex models, optional dynamic harness sourcing"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: medium
 horizon: next
 hitl: false
 type: dx
 source: session-2026-06-02 (opus-4-8 showed 200k cap in Context Window plugin)
 created: 2026-06-02
-updated: 2026-06-02
+updated: 2026-06-10
 prs: []
 refs: []
 depends_on: []

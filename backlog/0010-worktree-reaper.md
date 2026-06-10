@@ -1,14 +1,15 @@
 ---
 id: 10
 title: "Worktree reaper: agent script + HITL surface (no dashboard panel)"
-status: in-progress
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: medium
 horizon: next
 hitl: false
 type: feature
 source: research
 created: 2026-05-30
-updated: 2026-06-02
+updated: 2026-06-10
 prs: []
 refs: []
 depends_on: []

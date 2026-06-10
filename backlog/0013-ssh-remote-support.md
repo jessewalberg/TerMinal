@@ -1,14 +1,15 @@
 ---
 id: 13
 title: "SSH remote support — run claude/codex on remote hosts from the local cockpit"
-status: icebox
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: medium
 horizon: future
 hitl: false
 type: feature
 source: brainstorm
 created: 2026-05-30
-updated: 2026-05-30
+updated: 2026-06-10
 prs: []
 refs: []
 ---

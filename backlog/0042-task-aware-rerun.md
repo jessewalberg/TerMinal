@@ -1,14 +1,15 @@
 ---
 id: 42
 title: "Task-aware rerun — replay the ORIGINAL per-stage engines/models"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: low
 horizon: next
 hitl: false
 type: bug
 source: adr-0011-task-first-routing
 created: 2026-06-05
-updated: 2026-06-05
+updated: 2026-06-10
 prs: []
 refs: [docs/decisions/0011-task-first-role-routing.md]
 ---

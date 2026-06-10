@@ -1,14 +1,15 @@
 ---
 id: 23
 title: "Pre-repo idea capture + promote-to-scaffold"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: low
 horizon: future
 hitl: false
 type: ux
 source: analysis
 created: 2026-05-31
-updated: 2026-05-31
+updated: 2026-06-10
 prs: []
 refs: []
 ---

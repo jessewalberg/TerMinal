@@ -1,14 +1,15 @@
 ---
 id: 39
 title: "Resolve engine binaries to absolute paths at spawn time"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: low
 horizon: next
 hitl: false
 type: bug
 source: terminal-immediate-exit-investigation
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-10
 prs: []
 refs: []
 ---

@@ -1,14 +1,15 @@
 ---
 id: 38
 title: "Wedged detector: reclassify endless transient loops + explicit headless/interactive signal"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: low
 horizon: later
 hitl: false
 type: dx
 source: ADR-0010 (wedged-detector redefinition, 2026-06-03)
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-10
 prs: []
 refs: ["docs/decisions/0010-wedged-detector-definition.md"]
 depends_on: []

@@ -1,14 +1,15 @@
 ---
 id: 41
 title: "Walk-away durability for task runs (survive app quit mid-stage)"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: medium
 horizon: future
 hitl: false
 type: feature
 source: adr-0011-task-first-routing
 created: 2026-06-05
-updated: 2026-06-05
+updated: 2026-06-10
 prs: []
 refs: [docs/decisions/0011-task-first-role-routing.md]
 ---

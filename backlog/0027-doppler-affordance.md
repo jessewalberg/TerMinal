@@ -1,14 +1,15 @@
 ---
 id: 27
 title: "Auto-wrap spawned/cron agents in doppler run for Doppler repos"
-status: open
+status: closed
+closed_reason: "re-homed to agent-config factory backlog (2026-06-10 consolidation) — see backlog/factory-rebuild-plan.md"
 priority: low
 horizon: future
 hitl: false
 type: feature
 source: analysis
 created: 2026-05-31
-updated: 2026-05-31
+updated: 2026-06-10
 prs: []
 refs: []
 ---

@@ -1,14 +1,15 @@
 ---
 id: 7
 title: "Deploy ledger: terminal-cli helper + activity events + small dashboard view"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: low
 horizon: future
 hitl: false
 type: feature
 source: research
 created: 2026-05-30
-updated: 2026-05-30
+updated: 2026-06-10
 prs: []
 refs: []
 depends_on: []

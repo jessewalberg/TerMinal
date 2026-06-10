@@ -1,14 +1,14 @@
 ---
 id: 6
 title: "PR triage: risk_tier in /code-review spec + dashboard column"
-status: open
+status: closed
 priority: low
 horizon: next
 hitl: false
 type: feature
 source: research
 created: 2026-05-30
-updated: 2026-05-30
+updated: 2026-06-09
 prs: []
 refs: []
 depends_on: []

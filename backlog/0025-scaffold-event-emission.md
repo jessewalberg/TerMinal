@@ -1,14 +1,15 @@
 ---
 id: 25
 title: "Emit activity events from sibling repos so cross-repo rollups aren't input-starved"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: medium
 horizon: next
 hitl: false
 type: feature
 source: analysis
 created: 2026-05-31
-updated: 2026-05-31
+updated: 2026-06-10
 prs: []
 refs: []
 ---

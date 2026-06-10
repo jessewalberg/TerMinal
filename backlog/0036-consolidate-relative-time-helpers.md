@@ -1,14 +1,15 @@
 ---
 id: 36
 title: "Consolidate the divergent relative-time helpers onto lib/format.ts fmtAgo"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: low
 horizon: next
 hitl: false
 type: refactor
 source: analysis
 created: 2026-06-01
-updated: 2026-06-01
+updated: 2026-06-10
 prs: []
 refs: []
 depends_on: []

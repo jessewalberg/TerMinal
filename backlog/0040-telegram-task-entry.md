@@ -1,14 +1,15 @@
 ---
 id: 40
 title: "Telegram /task <prompt> — fire a role-routed task from the phone"
-status: open
+status: closed
+closed_reason: "obsolete — TerMinal decommissioned (vault ADR-0004; 2026-06-10 consolidation sweep); factory successor noted in triage report where applicable"
 priority: medium
 horizon: next
 hitl: false
 type: feature
 source: adr-0011-task-first-routing
 created: 2026-06-05
-updated: 2026-06-05
+updated: 2026-06-10
 prs: []
 refs: [docs/decisions/0011-task-first-role-routing.md]
 ---
